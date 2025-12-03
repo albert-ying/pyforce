@@ -94,9 +94,9 @@ def create_margin_figure():
     ax.axvline(x=-1.5, color="gray", linestyle="--", alpha=0.4, linewidth=1)
     ax.axvline(x=1.5, color="gray", linestyle="--", alpha=0.4, linewidth=1)
 
-    # Expand X region for labels - more on left to avoid Y-axis overlap
+    # Expand X region - labels closer to dots, more space on left for Y-axis
     xlim = ax.get_xlim()
-    ax.set_xlim(xlim[0] - 3.5, xlim[1] + 3.0)
+    ax.set_xlim(xlim[0] - 4.5, xlim[1] + 2.0)  # More left margin for Y-axis ticks
 
     annotate_margin(
         ax,

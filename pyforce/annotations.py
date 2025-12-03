@@ -1113,26 +1113,26 @@ def annotate_margin(
     if side in ("right", "left"):
         direction = 1 if side == "right" else -1
 
-        # Margin position (where labels are)
-        if margin_x is None:
-            if side == "right":
-                margin_x = xlim[1] - x_range * 0.01
-            else:
-                margin_x = xlim[0] + x_range * 0.01
-
-        # Calculate aligned X positions for clean non-overlapping lines:
-        # - elbow_x: where ALL first horizontal segments END (just past farthest dot)
-        # - label_align_x: where ALL third horizontal segments START
-        
-        # Find the rightmost/leftmost dot - elbow just slightly beyond
+        # Find extremes of annotated dots
         if side == "right":
             max_dot_x = max(p["x"] for p in point_data)
-            elbow_x = max_dot_x + x_range * 0.03  # Just past farthest dot
-            label_align_x = margin_x - x_range * 0.02
         else:
             min_dot_x = min(p["x"] for p in point_data)
-            elbow_x = min_dot_x - x_range * 0.03  # Just past farthest dot
-            label_align_x = margin_x + x_range * 0.02
+
+        # Margin position - CLOSER to dots (not at plot edge)
+        if margin_x is None:
+            if side == "right":
+                margin_x = max_dot_x + x_range * 0.12  # Close to rightmost dot
+            else:
+                margin_x = min_dot_x - x_range * 0.12  # Close to leftmost dot
+
+        # Aligned X positions for non-overlapping lines:
+        if side == "right":
+            elbow_x = max_dot_x + x_range * 0.02  # Just past farthest dot
+            label_align_x = margin_x - x_range * 0.015  # Short final segment
+        else:
+            elbow_x = min_dot_x - x_range * 0.02
+            label_align_x = margin_x + x_range * 0.015
 
         # Minimum spacing between labels
         min_spacing = label_spacing if label_spacing else y_range * 0.03

@@ -1,10 +1,12 @@
 """
 Heatmap Row Annotation Example
 
-Same style as margin annotation:
-- All first horizontal segments end at same X (aligned)
-- All third horizontal segments start at same X (aligned)
-- Short segments, labels close to heatmap
+Clear 3-segment connectors:
+1. Horizontal from heatmap edge
+2. Diagonal (slanted)
+3. Horizontal to label
+
+Labels close to heatmap but with enough spacing to not overlap.
 """
 
 import matplotlib.pyplot as plt
@@ -23,15 +25,14 @@ def annotate_heatmap_rows(
     label_color="black",
     line_color="gray",
     linewidth=0.6,
-    min_label_spacing=1.2,
+    min_label_spacing=2.5,  # Increased spacing to prevent overlap
 ):
     """
-    Annotate heatmap rows with aligned 3-segment connectors.
+    Annotate heatmap rows with clear 3-segment connectors.
 
-    Same pattern as margin annotation:
-    1. First horizontal: from heatmap edge to elbow_x (all aligned)
-    2. Diagonal: from elbow to label_align_x
-    3. Third horizontal: from label_align_x to label (all aligned)
+    1. Horizontal: from heatmap edge to elbow_x
+    2. Diagonal: from elbow to label position
+    3. Horizontal: short segment to label
     """
     xlim = ax.get_xlim()
     artists = []
@@ -42,48 +43,58 @@ def annotate_heatmap_rows(
     labels_sorted = [x[1] for x in sorted_data]
     n_labels = len(rows_sorted)
 
-    # Center labels vertically, ensure no overlap
+    # Center labels vertically with enough spacing
     total_height = (n_labels - 1) * min_label_spacing
     y_center = sum(rows_sorted) / n_labels
     y_start = y_center - total_height / 2
     label_y_positions = [y_start + i * min_label_spacing for i in range(n_labels)]
 
     if side == "right":
-        start_x = n_cols - 0.5  # Heatmap edge
+        heatmap_edge = n_cols - 0.5
+        # Positions for visible 3-segment connector
+        elbow_x = heatmap_edge + 0.3  # End of first horizontal
+        label_align_x = xlim[1] - 0.25  # Start of third horizontal
         label_x = xlim[1] - 0.05  # Label position
-        # Aligned positions - just past heatmap edge
-        elbow_x = n_cols - 0.5 + 0.15  # First segments end here
-        label_align_x = label_x - 0.12  # Third segments start here
         ha = "left"
     else:
-        start_x = -0.5
+        heatmap_edge = -0.5
+        elbow_x = heatmap_edge - 0.3
+        label_align_x = xlim[0] + 0.25
         label_x = xlim[0] + 0.05
-        elbow_x = -0.5 - 0.15
-        label_align_x = label_x + 0.12
         ha = "right"
 
     for row, label, label_y in zip(rows_sorted, labels_sorted, label_y_positions):
-        # 3-segment connector with aligned positions
-        vertices = np.array([
-            [start_x, row],           # Start at heatmap edge
-            [elbow_x, row],           # End of first horizontal (aligned)
-            [label_align_x, label_y], # Start of third horizontal (aligned)
-            [label_x, label_y],       # At label
-        ])
+        # Clear 3-segment connector
+        vertices = np.array(
+            [
+                [heatmap_edge, row],  # Start at heatmap edge
+                [elbow_x, row],  # End of first HORIZONTAL
+                [label_align_x, label_y],  # End of DIAGONAL / start of third horizontal
+                [label_x, label_y],  # End at label (HORIZONTAL)
+            ]
+        )
         codes = [Path.MOVETO, Path.LINETO, Path.LINETO, Path.LINETO]
 
         path = Path(vertices, codes)
         patch = PathPatch(
-            path, facecolor="none", edgecolor=line_color,
-            linewidth=linewidth, capstyle="round", joinstyle="round",
+            path,
+            facecolor="none",
+            edgecolor=line_color,
+            linewidth=linewidth,
+            capstyle="round",
+            joinstyle="round",
         )
         ax.add_patch(patch)
         artists.append(patch)
 
         text_obj = ax.text(
-            label_x + (0.03 if side == "right" else -0.03),
-            label_y, label,
-            fontsize=label_fontsize, color=label_color, ha=ha, va="center",
+            label_x + (0.05 if side == "right" else -0.05),
+            label_y,
+            label,
+            fontsize=label_fontsize,
+            color=label_color,
+            ha=ha,
+            va="center",
         )
         artists.append(text_obj)
 
@@ -108,8 +119,8 @@ def main():
     rows_to_annotate = [74, 75, 76]
     row_labels = ["Target_A", "Target_B", "Target_C"]
 
-    # Small extension for labels
-    ax.set_xlim(-0.5, n_cols + 1.2)
+    # Extension for labels - close to heatmap
+    ax.set_xlim(-0.5, n_cols + 2.0)
 
     annotate_heatmap_rows(
         ax,
@@ -121,13 +132,18 @@ def main():
         label_color="black",
         line_color="dimgray",
         linewidth=0.8,
-        min_label_spacing=1.5,
+        min_label_spacing=2.5,  # Enough spacing to prevent overlap
     )
 
     # Highlight region
     rect = Rectangle(
-        (-0.5, 70 - 0.5), n_cols, 15,
-        linewidth=2, edgecolor="red", facecolor="none", linestyle="--",
+        (-0.5, 70 - 0.5),
+        n_cols,
+        15,
+        linewidth=2,
+        edgecolor="red",
+        facecolor="none",
+        linestyle="--",
     )
     ax.add_patch(rect)
 
