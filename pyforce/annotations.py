@@ -1269,17 +1269,13 @@ def annotate_heatmap_rows(
     label_color: str = "black",
     line_color: str = "gray",
     linewidth: float = 0.6,
-    min_spacing: float = 2.0,
+    min_spacing: float = 1.5,
 ) -> List[plt.Artist]:
     """
-    Annotate specific rows in a heatmap with 3-segment connectors.
+    Smart heatmap row annotation with automatic dodge detection.
 
-    Creates connectors immediately adjacent to heatmap cells:
-    1. Short horizontal from cell edge
-    2. Diagonal to separate labels
-    3. Short horizontal to label
-
-    Labels are sorted by row position to prevent line crossing.
+    - If rows are far apart: simple horizontal line (no dodge)
+    - If rows are close (labels would overlap): 3-segment connector to separate
 
     Parameters
     ----------
@@ -1301,65 +1297,71 @@ def annotate_heatmap_rows(
         Color for connector lines
     linewidth : float, default=0.6
         Width of connector lines
-    min_spacing : float, default=2.0
-        Minimum spacing between labels (in row units)
+    min_spacing : float, default=1.5
+        Minimum vertical spacing between labels
 
     Returns
     -------
     list of matplotlib.artist.Artist
         Created artists (patches and text)
-
-    Example
-    -------
-    >>> import matplotlib.pyplot as plt
-    >>> import numpy as np
-    >>> from pyforce import annotate_heatmap_rows
-    >>> data = np.random.randn(100, 6)
-    >>> fig, ax = plt.subplots()
-    >>> ax.imshow(data, aspect='auto')
-    >>> ax.set_xlim(-0.5, 8)  # Small extension for labels
-    >>> annotate_heatmap_rows(ax, [40, 41, 42], ['A', 'B', 'C'], n_cols=6)
     """
     xlim = ax.get_xlim()
     artists = []
 
-    # Sort by row position to prevent crossing
+    # Sort by row position
     sorted_data = sorted(zip(rows_to_annotate, row_labels), key=lambda x: x[0])
     rows_sorted = [x[0] for x in sorted_data]
     labels_sorted = [x[1] for x in sorted_data]
-    n_labels = len(rows_sorted)
-
-    # Calculate label positions - centered, with minimum spacing
-    total_height = (n_labels - 1) * min_spacing
-    y_center = sum(rows_sorted) / n_labels
-    y_start = y_center - total_height / 2
-    label_y_positions = [y_start + i * min_spacing for i in range(n_labels)]
 
     if side == "right":
         heatmap_edge = n_cols - 0.5
-        # CLOSE to heatmap - small segments
-        elbow_x = heatmap_edge + 0.12  # First horizontal ends here
-        label_align_x = xlim[1] - 0.15  # Third horizontal starts here
-        label_x = xlim[1] - 0.02  # Label position
+        label_x = xlim[1] + 0.02
         ha = "left"
         direction = 1
     else:
         heatmap_edge = -0.5
-        elbow_x = heatmap_edge - 0.12
-        label_align_x = xlim[0] + 0.15
-        label_x = xlim[0] + 0.02
+        label_x = xlim[0] - 0.02
         ha = "right"
         direction = -1
 
+    # Smart label positioning: only dodge when labels would overlap
+    label_y_positions = []
+    for i, row in enumerate(rows_sorted):
+        if i == 0:
+            label_y_positions.append(float(row))
+        else:
+            prev_label_y = label_y_positions[-1]
+            # Check if this row is too close to previous label
+            if row - prev_label_y < min_spacing:
+                # Need to dodge - push label down
+                label_y_positions.append(prev_label_y + min_spacing)
+            else:
+                # Far enough apart - no dodge needed
+                label_y_positions.append(float(row))
+
     for row, label, label_y in zip(rows_sorted, labels_sorted, label_y_positions):
-        # 3-segment connector: horizontal → diagonal → horizontal
-        vertices = np.array([
-            [heatmap_edge, row],       # Start at cell edge
-            [elbow_x, row],            # End of first horizontal
-            [label_align_x, label_y],  # End of diagonal
-            [label_x, label_y],        # At label
-        ])
-        codes = [Path.MOVETO, Path.LINETO, Path.LINETO, Path.LINETO]
+        # Check if dodge is needed (label_y differs from row)
+        needs_dodge = abs(label_y - row) > 0.1
+
+        if needs_dodge:
+            # 3-segment connector: horizontal → diagonal → horizontal
+            elbow_x = heatmap_edge + direction * 0.06
+            label_align_x = label_x - direction * 0.04
+
+            vertices = np.array([
+                [heatmap_edge, row],
+                [elbow_x, row],
+                [label_align_x, label_y],
+                [label_x, label_y],
+            ])
+            codes = [Path.MOVETO, Path.LINETO, Path.LINETO, Path.LINETO]
+        else:
+            # Simple horizontal line - no dodge needed
+            vertices = np.array([
+                [heatmap_edge, row],
+                [label_x, row],
+            ])
+            codes = [Path.MOVETO, Path.LINETO]
 
         path = Path(vertices, codes)
         patch = PathPatch(
@@ -1375,7 +1377,7 @@ def annotate_heatmap_rows(
 
         # Add label
         text_obj = ax.text(
-            label_x + direction * 0.03,
+            label_x + direction * 0.02,
             label_y,
             label,
             fontsize=label_fontsize,
