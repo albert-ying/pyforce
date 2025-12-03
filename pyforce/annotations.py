@@ -894,10 +894,13 @@ def _create_margin_connector(
 
         vertices = np.array(
             [
-                [start_x, start_y],      # Start at dot
+                [start_x, start_y],  # Start at dot
                 [seg1_end_x, seg1_end_y],  # End of long horizontal
-                [seg3_start_x, seg3_start_y],  # Start of short horizontal (after diagonal)
-                [end_x, end_y],          # At label
+                [
+                    seg3_start_x,
+                    seg3_start_y,
+                ],  # Start of short horizontal (after diagonal)
+                [end_x, end_y],  # At label
             ]
         )
     else:
