@@ -1269,16 +1269,17 @@ def annotate_heatmap_rows(
     label_color: str = "black",
     line_color: str = "gray",
     linewidth: float = 0.6,
-    label_offset: float = 0.5,
-    segment_length: float = 0.3,
-    min_spacing: float = 1.5,
+    min_spacing: float = 2.0,
 ) -> List[plt.Artist]:
     """
-    Annotate specific rows in a heatmap with margin-aligned labels.
+    Annotate specific rows in a heatmap with 3-segment connectors.
 
-    Creates three-segment connectors (horizontal + diagonal + horizontal) from
-    heatmap rows to labels aligned at a margin. Labels are ordered by row position
-    to prevent connector lines from crossing.
+    Creates connectors immediately adjacent to heatmap cells:
+    1. Short horizontal from cell edge
+    2. Diagonal to separate labels
+    3. Short horizontal to label
+
+    Labels are sorted by row position to prevent line crossing.
 
     Parameters
     ----------
@@ -1300,12 +1301,8 @@ def annotate_heatmap_rows(
         Color for connector lines
     linewidth : float, default=0.6
         Width of connector lines
-    label_offset : float, default=0.5
-        Distance from plot edge to labels
-    segment_length : float, default=0.3
-        Length of horizontal segments
-    min_spacing : float, default=1.5
-        Minimum spacing between labels
+    min_spacing : float, default=2.0
+        Minimum spacing between labels (in row units)
 
     Returns
     -------
@@ -1320,50 +1317,48 @@ def annotate_heatmap_rows(
     >>> data = np.random.randn(100, 6)
     >>> fig, ax = plt.subplots()
     >>> ax.imshow(data, aspect='auto')
-    >>> ax.set_xlim(-0.5, 10)  # Extend for labels
-    >>> annotate_heatmap_rows(ax, [10, 25, 50], ['Gene_A', 'Gene_B', 'Gene_C'], n_cols=6)
+    >>> ax.set_xlim(-0.5, 8)  # Small extension for labels
+    >>> annotate_heatmap_rows(ax, [40, 41, 42], ['A', 'B', 'C'], n_cols=6)
     """
     xlim = ax.get_xlim()
     artists = []
 
-    # Sort by row position (top to bottom) to prevent crossing
+    # Sort by row position to prevent crossing
     sorted_data = sorted(zip(rows_to_annotate, row_labels), key=lambda x: x[0])
     rows_sorted = [x[0] for x in sorted_data]
     labels_sorted = [x[1] for x in sorted_data]
+    n_labels = len(rows_sorted)
 
-    # Calculate label positions (maintain order, ensure minimum spacing)
-    label_y_positions = []
-    for i, row in enumerate(rows_sorted):
-        if i == 0:
-            label_y_positions.append(row)
-        else:
-            prev_y = label_y_positions[-1]
-            label_y_positions.append(max(row, prev_y + min_spacing))
+    # Calculate label positions - centered, with minimum spacing
+    total_height = (n_labels - 1) * min_spacing
+    y_center = sum(rows_sorted) / n_labels
+    y_start = y_center - total_height / 2
+    label_y_positions = [y_start + i * min_spacing for i in range(n_labels)]
 
     if side == "right":
-        start_x = n_cols - 0.5
-        label_x = xlim[1] - label_offset
+        heatmap_edge = n_cols - 0.5
+        # CLOSE to heatmap - small segments
+        elbow_x = heatmap_edge + 0.12  # First horizontal ends here
+        label_align_x = xlim[1] - 0.15  # Third horizontal starts here
+        label_x = xlim[1] - 0.02  # Label position
         ha = "left"
         direction = 1
     else:
-        start_x = -0.5
-        label_x = xlim[0] + label_offset
+        heatmap_edge = -0.5
+        elbow_x = heatmap_edge - 0.12
+        label_align_x = xlim[0] + 0.15
+        label_x = xlim[0] + 0.02
         ha = "right"
         direction = -1
 
     for row, label, label_y in zip(rows_sorted, labels_sorted, label_y_positions):
-        # Three-segment connector: horizontal, diagonal, horizontal
-        seg1_end_x = start_x + direction * segment_length
-        seg3_start_x = label_x - direction * segment_length
-
-        vertices = np.array(
-            [
-                [start_x, row],
-                [seg1_end_x, row],
-                [seg3_start_x, label_y],
-                [label_x, label_y],
-            ]
-        )
+        # 3-segment connector: horizontal → diagonal → horizontal
+        vertices = np.array([
+            [heatmap_edge, row],       # Start at cell edge
+            [elbow_x, row],            # End of first horizontal
+            [label_align_x, label_y],  # End of diagonal
+            [label_x, label_y],        # At label
+        ])
         codes = [Path.MOVETO, Path.LINETO, Path.LINETO, Path.LINETO]
 
         path = Path(vertices, codes)
@@ -1380,7 +1375,7 @@ def annotate_heatmap_rows(
 
         # Add label
         text_obj = ax.text(
-            label_x + direction * 0.1,
+            label_x + direction * 0.03,
             label_y,
             label,
             fontsize=label_fontsize,
