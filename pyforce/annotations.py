@@ -1366,19 +1366,23 @@ def annotate_edge(
             elbow_x = edge_x + direction * seg_width
             label_align_x = label_x - direction * seg_width
 
-            vertices = np.array([
-                [edge_x, y],
-                [elbow_x, y],
-                [label_align_x, label_y],
-                [label_x, label_y],
-            ])
+            vertices = np.array(
+                [
+                    [edge_x, y],
+                    [elbow_x, y],
+                    [label_align_x, label_y],
+                    [label_x, label_y],
+                ]
+            )
             codes = [Path.MOVETO, Path.LINETO, Path.LINETO, Path.LINETO]
         else:
             # Simple horizontal line
-            vertices = np.array([
-                [edge_x, y],
-                [label_x, y],
-            ])
+            vertices = np.array(
+                [
+                    [edge_x, y],
+                    [label_x, y],
+                ]
+            )
             codes = [Path.MOVETO, Path.LINETO]
 
         path = Path(vertices, codes)

@@ -1,7 +1,7 @@
 """
 Edge Annotation Examples
 
-Shows annotate_edge() for:
+Shows annotate_edge() - one function for all edge annotations:
 1. Heatmap row annotations
 2. Line plot end annotations
 """
@@ -10,11 +10,11 @@ import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.patches import Rectangle
 
-from pyforce import annotate_edge, annotate_heatmap_rows
+from pyforce import annotate_edge
 
 
 def heatmap_example():
-    """Heatmap with smart row annotations."""
+    """Heatmap with smart row annotations using annotate_edge()."""
     np.random.seed(123)
 
     n_rows = 150
@@ -28,29 +28,26 @@ def heatmap_example():
     im = ax.imshow(data, aspect="auto", cmap="viridis")
 
     # Mix of rows: some close (need dodge), some far (no dodge)
-    rows_to_annotate = [
-        20,
-        45,
-        74, 75, 76,
-        100,
-        130, 131,
-    ]
-    row_labels = [
+    rows = [20, 45, 74, 75, 76, 100, 130, 131]
+    labels = [
         "Gene_A",
         "Gene_B",
-        "Target_1", "Target_2", "Target_3",
+        "Target_1",
+        "Target_2",
+        "Target_3",
         "Marker_X",
-        "Factor_1", "Factor_2",
+        "Factor_1",
+        "Factor_2",
     ]
 
-    ax.set_xlim(-0.5, n_cols - 0.1)
+    ax.set_xlim(-0.5, n_cols - 0.2)
 
-    # Use heatmap convenience function
-    annotate_heatmap_rows(
+    # Same annotate_edge() function - just specify x_start for heatmap
+    annotate_edge(
         ax,
-        rows_to_annotate,
-        row_labels,
-        n_cols,
+        y_positions=rows,
+        labels=labels,
+        x_start=n_cols - 0.5,  # Heatmap edge
         side="right",
         label_fontsize=9,
         label_color="black",
@@ -60,14 +57,19 @@ def heatmap_example():
     )
 
     rect = Rectangle(
-        (-0.5, 70 - 0.5), n_cols, 15,
-        linewidth=2, edgecolor="red", facecolor="none", linestyle="--",
+        (-0.5, 70 - 0.5),
+        n_cols,
+        15,
+        linewidth=2,
+        edgecolor="red",
+        facecolor="none",
+        linestyle="--",
     )
     ax.add_patch(rect)
 
     ax.set_xlabel("Samples", fontsize=11)
     ax.set_ylabel("Features (150 rows)", fontsize=11)
-    ax.set_title("Heatmap - Smart Row Annotations", fontsize=13, fontweight="bold")
+    ax.set_title("Heatmap - annotate_edge()", fontsize=13, fontweight="bold")
     ax.set_xticks(range(n_cols))
     ax.set_xticklabels([f"S{i+1}" for i in range(n_cols)])
     ax.spines["right"].set_visible(False)
@@ -81,7 +83,7 @@ def heatmap_example():
 
 
 def lineplot_example():
-    """Line plot with end annotations."""
+    """Line plot with end annotations using annotate_edge()."""
     np.random.seed(42)
 
     x = np.linspace(0, 10, 100)
@@ -101,10 +103,9 @@ def lineplot_example():
     for i, (name, y) in enumerate(lines.items()):
         ax.plot(x, y, color=colors[i], linewidth=2)
 
-    # Extend x for labels
-    ax.set_xlim(0, 11.5)
+    ax.set_xlim(0, 10.5)
 
-    # Annotate at line ends using general annotate_edge
+    # Same annotate_edge() function - specify x_start at line end
     y_ends = [y[-1] for y in lines.values()]
     labels = list(lines.keys())
 
@@ -112,7 +113,7 @@ def lineplot_example():
         ax,
         y_positions=y_ends,
         labels=labels,
-        x_start=x[-1],
+        x_start=x[-1],  # End of lines
         side="right",
         label_fontsize=10,
         label_color="black",
@@ -123,7 +124,7 @@ def lineplot_example():
 
     ax.set_xlabel("Time", fontsize=11)
     ax.set_ylabel("Value", fontsize=11)
-    ax.set_title("Line Plot - Smart End Annotations", fontsize=13, fontweight="bold")
+    ax.set_title("Line Plot - annotate_edge()", fontsize=13, fontweight="bold")
     ax.grid(True, alpha=0.3)
     ax.spines["right"].set_visible(False)
     ax.spines["top"].set_visible(False)
