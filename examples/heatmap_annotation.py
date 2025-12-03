@@ -1,19 +1,19 @@
 """
-Heatmap Row Annotation Example
+Edge Annotation Examples
 
-Smart annotation that automatically detects when dodge is needed:
-- Far apart rows: simple horizontal line
-- Close rows: 3-segment connector to separate labels
+Shows annotate_edge() for:
+1. Heatmap row annotations
+2. Line plot end annotations
 """
 
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.patches import Rectangle
 
-from pyforce import annotate_heatmap_rows
+from pyforce import annotate_edge, annotate_heatmap_rows
 
 
-def main():
+def heatmap_example():
     """Heatmap with smart row annotations."""
     np.random.seed(123)
 
@@ -27,26 +27,25 @@ def main():
 
     im = ax.imshow(data, aspect="auto", cmap="viridis")
 
-    # Mix of rows: some close together (need dodge), some far apart (no dodge)
+    # Mix of rows: some close (need dodge), some far (no dodge)
     rows_to_annotate = [
-        20,        # Far from others - no dodge
-        45,        # Far from others - no dodge  
-        74, 75, 76,  # Close together - need dodge
-        100,       # Far from others - no dodge
-        130, 131,  # Close together - need dodge
+        20,
+        45,
+        74, 75, 76,
+        100,
+        130, 131,
     ]
     row_labels = [
         "Gene_A",
-        "Gene_B", 
+        "Gene_B",
         "Target_1", "Target_2", "Target_3",
         "Marker_X",
         "Factor_1", "Factor_2",
     ]
 
-    # Minimal extension - labels right at edge
     ax.set_xlim(-0.5, n_cols - 0.1)
 
-    # Smart annotation - auto-detects when to dodge
+    # Use heatmap convenience function
     annotate_heatmap_rows(
         ax,
         rows_to_annotate,
@@ -57,18 +56,12 @@ def main():
         label_color="black",
         line_color="dimgray",
         linewidth=0.7,
-        min_spacing=2.2,  # Minimum space between labels
+        min_spacing=2.2,
     )
 
-    # Highlight notable region
     rect = Rectangle(
-        (-0.5, 70 - 0.5),
-        n_cols,
-        15,
-        linewidth=2,
-        edgecolor="red",
-        facecolor="none",
-        linestyle="--",
+        (-0.5, 70 - 0.5), n_cols, 15,
+        linewidth=2, edgecolor="red", facecolor="none", linestyle="--",
     )
     ax.add_patch(rect)
 
@@ -77,7 +70,6 @@ def main():
     ax.set_title("Heatmap - Smart Row Annotations", fontsize=13, fontweight="bold")
     ax.set_xticks(range(n_cols))
     ax.set_xticklabels([f"S{i+1}" for i in range(n_cols)])
-
     ax.spines["right"].set_visible(False)
     ax.spines["top"].set_visible(False)
 
@@ -85,6 +77,65 @@ def main():
 
     plt.savefig("heatmap_example.png", dpi=150, bbox_inches="tight")
     print("Saved heatmap_example.png")
+    plt.close()
+
+
+def lineplot_example():
+    """Line plot with end annotations."""
+    np.random.seed(42)
+
+    x = np.linspace(0, 10, 100)
+
+    # Several lines - some end close together, some far apart
+    lines = {
+        "Series_A": np.sin(x) * 2 + 5,
+        "Series_B": np.sin(x + 0.5) * 2 + 5.3,  # Close to A
+        "Series_C": np.cos(x) * 1.5 + 2,
+        "Series_D": np.cos(x + 1) * 1.5 + 2.2,  # Close to C
+        "Series_E": x * 0.3 + 1,  # Far from others
+    }
+
+    fig, ax = plt.subplots(figsize=(12, 6))
+
+    colors = plt.cm.tab10.colors
+    for i, (name, y) in enumerate(lines.items()):
+        ax.plot(x, y, color=colors[i], linewidth=2)
+
+    # Extend x for labels
+    ax.set_xlim(0, 11.5)
+
+    # Annotate at line ends using general annotate_edge
+    y_ends = [y[-1] for y in lines.values()]
+    labels = list(lines.keys())
+
+    annotate_edge(
+        ax,
+        y_positions=y_ends,
+        labels=labels,
+        x_start=x[-1],
+        side="right",
+        label_fontsize=10,
+        label_color="black",
+        line_color="gray",
+        linewidth=0.8,
+        min_spacing=0.4,
+    )
+
+    ax.set_xlabel("Time", fontsize=11)
+    ax.set_ylabel("Value", fontsize=11)
+    ax.set_title("Line Plot - Smart End Annotations", fontsize=13, fontweight="bold")
+    ax.grid(True, alpha=0.3)
+    ax.spines["right"].set_visible(False)
+    ax.spines["top"].set_visible(False)
+
+    plt.savefig("lineplot_example.png", dpi=150, bbox_inches="tight")
+    print("Saved lineplot_example.png")
+    plt.close()
+
+
+def main():
+    heatmap_example()
+    lineplot_example()
 
 
 if __name__ == "__main__":

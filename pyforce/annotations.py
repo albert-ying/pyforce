@@ -1259,34 +1259,37 @@ def annotate_margin(
     return artists
 
 
-def annotate_heatmap_rows(
+def annotate_edge(
     ax: plt.Axes,
-    rows_to_annotate: List[int],
-    row_labels: List[str],
-    n_cols: int,
+    y_positions: List[float],
+    labels: List[str],
+    x_start: Optional[float] = None,
     side: Literal["right", "left"] = "right",
     label_fontsize: int = 9,
     label_color: str = "black",
     line_color: str = "gray",
     linewidth: float = 0.6,
-    min_spacing: float = 1.5,
+    min_spacing: Optional[float] = None,
 ) -> List[plt.Artist]:
     """
-    Smart heatmap row annotation with automatic dodge detection.
+    Smart edge annotation for any plot (heatmap, line plot, etc.).
 
-    - If rows are far apart: simple horizontal line (no dodge)
-    - If rows are close (labels would overlap): 3-segment connector to separate
+    Automatically detects when dodge is needed:
+    - Far apart: simple horizontal line
+    - Close together: 3-segment connector (1/3 + 1/3 + 1/3 ratio)
+
+    Works for heatmaps (annotate rows), line plots (annotate at end), etc.
 
     Parameters
     ----------
     ax : matplotlib.axes.Axes
-        The axes containing the heatmap
-    rows_to_annotate : list of int
-        Row indices to annotate
-    row_labels : list of str
-        Labels for each row
-    n_cols : int
-        Number of columns in heatmap
+        The axes to annotate
+    y_positions : list of float
+        Y positions to annotate (row indices for heatmap, y-values for line plot)
+    labels : list of str
+        Labels for each position
+    x_start : float, optional
+        X position where connectors start. If None, uses plot edge.
     side : str, default='right'
         'right' or 'left'
     label_fontsize : int, default=9
@@ -1297,69 +1300,84 @@ def annotate_heatmap_rows(
         Color for connector lines
     linewidth : float, default=0.6
         Width of connector lines
-    min_spacing : float, default=1.5
-        Minimum vertical spacing between labels
+    min_spacing : float, optional
+        Minimum spacing between labels. If None, auto-calculated.
 
     Returns
     -------
     list of matplotlib.artist.Artist
         Created artists (patches and text)
+
+    Example
+    -------
+    >>> # For heatmap
+    >>> annotate_edge(ax, [10, 11, 12], ['A', 'B', 'C'], x_start=n_cols-0.5)
+    >>> # For line plot
+    >>> annotate_edge(ax, [y1[-1], y2[-1]], ['Line 1', 'Line 2'])
     """
     xlim = ax.get_xlim()
+    ylim = ax.get_ylim()
+    y_range = ylim[1] - ylim[0]
     artists = []
 
-    # Sort by row position
-    sorted_data = sorted(zip(rows_to_annotate, row_labels), key=lambda x: x[0])
-    rows_sorted = [x[0] for x in sorted_data]
+    # Auto-calculate min_spacing if not provided
+    if min_spacing is None:
+        min_spacing = y_range * 0.02
+
+    # Sort by y position
+    sorted_data = sorted(zip(y_positions, labels), key=lambda x: x[0])
+    y_sorted = [x[0] for x in sorted_data]
     labels_sorted = [x[1] for x in sorted_data]
 
     if side == "right":
-        heatmap_edge = n_cols - 0.5
-        label_x = xlim[1] + 0.02
+        edge_x = x_start if x_start is not None else xlim[1]
+        label_x = xlim[1] + 0.01
         ha = "left"
         direction = 1
     else:
-        heatmap_edge = -0.5
-        label_x = xlim[0] - 0.02
+        edge_x = x_start if x_start is not None else xlim[0]
+        label_x = xlim[0] - 0.01
         ha = "right"
         direction = -1
 
+    # Total horizontal distance for connector
+    total_width = abs(label_x - edge_x)
+
     # Smart label positioning: only dodge when labels would overlap
     label_y_positions = []
-    for i, row in enumerate(rows_sorted):
+    for i, y in enumerate(y_sorted):
         if i == 0:
-            label_y_positions.append(float(row))
+            label_y_positions.append(float(y))
         else:
             prev_label_y = label_y_positions[-1]
-            # Check if this row is too close to previous label
-            if row - prev_label_y < min_spacing:
-                # Need to dodge - push label down
+            if y - prev_label_y < min_spacing:
+                # Need to dodge
                 label_y_positions.append(prev_label_y + min_spacing)
             else:
-                # Far enough apart - no dodge needed
-                label_y_positions.append(float(row))
+                # No dodge needed
+                label_y_positions.append(float(y))
 
-    for row, label, label_y in zip(rows_sorted, labels_sorted, label_y_positions):
-        # Check if dodge is needed (label_y differs from row)
-        needs_dodge = abs(label_y - row) > 0.1
+    for y, label, label_y in zip(y_sorted, labels_sorted, label_y_positions):
+        needs_dodge = abs(label_y - y) > 0.01
 
         if needs_dodge:
-            # 3-segment connector: horizontal → diagonal → horizontal
-            elbow_x = heatmap_edge + direction * 0.06
-            label_align_x = label_x - direction * 0.04
+            # 3-segment connector with EQUAL 1/3 ratio
+            seg_width = total_width / 3
+            elbow_x = edge_x + direction * seg_width
+            label_align_x = label_x - direction * seg_width
 
             vertices = np.array([
-                [heatmap_edge, row],
-                [elbow_x, row],
+                [edge_x, y],
+                [elbow_x, y],
                 [label_align_x, label_y],
                 [label_x, label_y],
             ])
             codes = [Path.MOVETO, Path.LINETO, Path.LINETO, Path.LINETO]
         else:
-            # Simple horizontal line - no dodge needed
+            # Simple horizontal line
             vertices = np.array([
-                [heatmap_edge, row],
-                [label_x, row],
+                [edge_x, y],
+                [label_x, y],
             ])
             codes = [Path.MOVETO, Path.LINETO]
 
@@ -1375,9 +1393,8 @@ def annotate_heatmap_rows(
         ax.add_patch(patch)
         artists.append(patch)
 
-        # Add label
         text_obj = ax.text(
-            label_x + direction * 0.02,
+            label_x + direction * 0.01,
             label_y,
             label,
             fontsize=label_fontsize,
@@ -1388,6 +1405,48 @@ def annotate_heatmap_rows(
         artists.append(text_obj)
 
     return artists
+
+
+def annotate_heatmap_rows(
+    ax: plt.Axes,
+    rows_to_annotate: List[int],
+    row_labels: List[str],
+    n_cols: int,
+    side: Literal["right", "left"] = "right",
+    **kwargs,
+) -> List[plt.Artist]:
+    """
+    Convenience wrapper for annotate_edge() for heatmaps.
+
+    Parameters
+    ----------
+    ax : matplotlib.axes.Axes
+        The axes containing the heatmap
+    rows_to_annotate : list of int
+        Row indices to annotate
+    row_labels : list of str
+        Labels for each row
+    n_cols : int
+        Number of columns in heatmap
+    side : str, default='right'
+        'right' or 'left'
+    **kwargs
+        Additional arguments passed to annotate_edge()
+
+    Returns
+    -------
+    list of matplotlib.artist.Artist
+        Created artists
+    """
+    x_start = n_cols - 0.5 if side == "right" else -0.5
+    return annotate_edge(
+        ax,
+        y_positions=[float(r) for r in rows_to_annotate],
+        labels=row_labels,
+        x_start=x_start,
+        side=side,
+        **kwargs,
+    )
 
 
 # Aliases for compatibility
