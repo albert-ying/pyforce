@@ -83,6 +83,28 @@ plt.show()
 
 ![Volcano Plot Example](assets/volcano_example.png)
 
+### Margin-Aligned Annotations (Dense Plots)
+
+For dense plots like volcano plots, use margin annotations to place labels on the sides:
+
+```python
+from pyforce import annotate_margin
+
+annotate_margin(
+    ax, x, y,
+    labels=gene_names,
+    indices=sig_indices,
+    side="both",  # 'right', 'left', 'top', 'bottom', or 'both'
+    point_size=60,
+    label_fontsize=8,
+)
+```
+
+Labels are aligned at a margin position with three-segment connectors:
+1. First segment from dot (horizontal for left/right, vertical for top/bottom)
+2. Diagonal connector
+3. Final segment to aligned label
+
 ### Hull Annotations (Clustered Data)
 
 Annotate groups of points with smooth convex hulls:
@@ -148,6 +170,23 @@ Annotate points with smart elbow connectors.
 | `connection_color` | str | 'gray' | Connector color |
 | `force_points` | float | 1.0 | Repulsion force from points |
 | `force_text` | float | 0.5 | Repulsion between labels |
+
+### `annotate_margin()`
+
+Annotate points with labels aligned at a margin.
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `ax` | Axes | required | Matplotlib axes to draw on |
+| `x`, `y` | array-like | required | All point coordinates |
+| `labels` | list[str] | required | Text labels for points |
+| `indices` | array-like | None | Indices of points to annotate |
+| `side` | str | 'right' | Where to place: 'right', 'left', 'top', 'bottom', 'both' |
+| `point_size` | float | 40 | Scatter point size |
+| `margin_x` | float | None | X position for margin (auto if None) |
+| `margin_y` | float | None | Y position for margin (auto if None) |
+| `connection_linewidth` | float | 0.6 | Connector line width |
+| `sort_by` | str | 'y' | Sort labels: 'y', 'x', 'value', 'none' |
 
 ### `geom_mark_hull()`
 

@@ -1,14 +1,14 @@
 """
 Volcano Plot Example
 
-Demonstrates smart point annotations with elbow connectors
-that avoid overlapping with dots and other labels.
+Demonstrates margin-aligned annotations for dense plots.
+Labels are placed on both sides with three-segment connectors.
 """
 
 import matplotlib.pyplot as plt
 import numpy as np
 
-from pyforce import annotate_points
+from pyforce import annotate_margin
 
 
 def main():
@@ -30,7 +30,7 @@ def main():
     gene_names = [f"Gene_{i}" for i in sig_indices]
 
     # Create plot
-    fig, ax = plt.subplots(figsize=(12, 9))
+    fig, ax = plt.subplots(figsize=(14, 9))
 
     # Scatter plot
     colors = np.where(significant, "crimson", "gray")
@@ -41,30 +41,35 @@ def main():
     ax.axvline(x=-1.5, color="gray", linestyle="--", alpha=0.4, linewidth=1)
     ax.axvline(x=1.5, color="gray", linestyle="--", alpha=0.4, linewidth=1)
 
-    # Smart annotations with improved parameters
-    annotate_points(
+    # Extend x limits to make room for labels
+    xlim = ax.get_xlim()
+    ax.set_xlim(xlim[0] - 1.5, xlim[1] + 1.5)
+    
+    # Margin-aligned annotations on both sides
+    annotate_margin(
         ax,
         log_fc,
         neg_log_p,
         labels=gene_names,
         indices=sig_indices,
+        side="both",  # Split labels between left and right
         point_size=60,
         label_fontsize=8,
         label_color="darkred",
         connection_color="gray",
-        connection_linewidth=0.7,
-        min_distance_for_connector=0.2,
-        elbow_angle=50.0,
-        force_points=1.5,  # Strong repulsion from points
-        force_text=0.8,  # Strong text-text repulsion
-        expand_points=3.0,  # Large collision boxes for points
-        expand_text=1.6,
+        connection_linewidth=0.5,
     )
 
     ax.set_xlabel("Log2 Fold Change", fontsize=12)
     ax.set_ylabel("-Log10(p-value)", fontsize=12)
-    ax.set_title("Volcano Plot with Smart Annotations", fontsize=14, fontweight="bold")
+    ax.set_title("Volcano Plot with Margin Annotations", fontsize=14, fontweight="bold")
     ax.grid(True, alpha=0.2)
+    
+    # Remove spines to avoid overlap with labels
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    ax.spines["left"].set_visible(False)
+    ax.spines["bottom"].set_visible(False)
 
     plt.tight_layout()
     plt.savefig("volcano_example.png", dpi=150, bbox_inches="tight")
