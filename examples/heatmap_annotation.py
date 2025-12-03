@@ -1,8 +1,9 @@
 """
 Heatmap Row Annotation Example
 
-Demonstrates compact 3-segment connectors for annotating specific rows
-in a heatmap with many rows. The connectors are short and close to the heatmap.
+Demonstrates compact 3-segment connectors for annotating specific rows.
+All segments are SHORT and labels stay close to the heatmap.
+Uses aligned elbow positions to prevent line overlap.
 """
 
 import matplotlib.pyplot as plt
@@ -21,19 +22,17 @@ def annotate_heatmap_rows(
     label_color="black",
     line_color="gray",
     linewidth=0.6,
-    first_segment_length=0.2,
-    final_segment_length=0.08,
     min_label_spacing=1.0,
 ):
     """
-    Annotate specific rows in a heatmap with compact 3-segment connectors.
+    Annotate specific rows in a heatmap with aligned 3-segment connectors.
 
-    The connectors are short and stay close to the heatmap:
-    1. Short horizontal from heatmap edge
-    2. Short diagonal to separate labels
-    3. Very short horizontal to label
+    All connectors have:
+    1. Short horizontal from heatmap edge to elbow_x (aligned)
+    2. Short diagonal from elbow to label_align_x
+    3. Short horizontal from label_align_x to label (aligned)
 
-    Labels are sorted by row position to prevent line crossing.
+    Aligned positions prevent line overlap.
     """
     xlim = ax.get_xlim()
     artists = []
@@ -42,38 +41,35 @@ def annotate_heatmap_rows(
     sorted_data = sorted(zip(rows_to_annotate, row_labels), key=lambda x: x[0])
     rows_sorted = [x[0] for x in sorted_data]
     labels_sorted = [x[1] for x in sorted_data]
+    n_labels = len(rows_sorted)
 
-    # Calculate label positions - stay at row y, adjust only if overlap
-    label_y_positions = []
-    for i, row in enumerate(rows_sorted):
-        if i == 0:
-            label_y_positions.append(float(row))
-        else:
-            prev_y = label_y_positions[-1]
-            min_allowed_y = prev_y + min_label_spacing
-            label_y_positions.append(max(float(row), min_allowed_y))
+    # Calculate label positions - center vertically, maintain order
+    total_height = (n_labels - 1) * min_label_spacing
+    y_center = sum(rows_sorted) / n_labels
+    y_start = y_center - total_height / 2
+    label_y_positions = [y_start + i * min_label_spacing for i in range(n_labels)]
 
     if side == "right":
         start_x = n_cols - 0.5
         label_x = xlim[1] - 0.05
+        # Aligned positions - SHORT segments
+        elbow_x = n_cols - 0.5 + 0.2  # All first segments end here
+        label_align_x = label_x - 0.15  # All third segments start here
         ha = "left"
-        direction = 1
     else:
         start_x = -0.5
         label_x = xlim[0] + 0.05
+        elbow_x = -0.5 - 0.2
+        label_align_x = label_x + 0.15
         ha = "right"
-        direction = -1
 
     for row, label, label_y in zip(rows_sorted, labels_sorted, label_y_positions):
-        # Compact 3-segment connector
-        seg1_end_x = start_x + direction * first_segment_length
-        seg3_start_x = label_x - direction * final_segment_length
-
+        # 3-segment connector with aligned positions
         vertices = np.array([
-            [start_x, row],
-            [seg1_end_x, row],
-            [seg3_start_x, label_y],
-            [label_x, label_y],
+            [start_x, row],          # Start at heatmap edge
+            [elbow_x, row],          # End of first horizontal (aligned)
+            [label_align_x, label_y], # Start of third horizontal (aligned)
+            [label_x, label_y],      # At label
         ])
         codes = [Path.MOVETO, Path.LINETO, Path.LINETO, Path.LINETO]
 
@@ -86,7 +82,8 @@ def annotate_heatmap_rows(
         artists.append(patch)
 
         text_obj = ax.text(
-            label_x + direction * 0.03, label_y, label,
+            label_x + (0.03 if side == "right" else -0.03),
+            label_y, label,
             fontsize=label_fontsize, color=label_color, ha=ha, va="center",
         )
         artists.append(text_obj)
@@ -102,19 +99,18 @@ def main():
     n_cols = 8
 
     data = np.random.randn(n_rows, n_cols)
-    # Create a notable region
     data[70:85, 2:6] += 3
 
     fig, ax = plt.subplots(figsize=(10, 12))
 
     im = ax.imshow(data, aspect="auto", cmap="viridis")
 
-    # Annotate 3 CONTINUOUS rows very close together
+    # Annotate 3 CONTINUOUS rows
     rows_to_annotate = [74, 75, 76]
     row_labels = ["Target_A", "Target_B", "Target_C"]
 
-    # Minimal extension - keep labels close to heatmap
-    ax.set_xlim(-0.5, n_cols + 1.8)
+    # Minimal extension - labels close to heatmap
+    ax.set_xlim(-0.5, n_cols + 1.5)
 
     annotate_heatmap_rows(
         ax,
@@ -126,12 +122,10 @@ def main():
         label_color="black",
         line_color="dimgray",
         linewidth=0.8,
-        first_segment_length=0.15,
-        final_segment_length=0.05,
-        min_label_spacing=1.2,
+        min_label_spacing=1.5,
     )
 
-    # Highlight the annotated region
+    # Highlight region
     rect = Rectangle(
         (-0.5, 70 - 0.5), n_cols, 15,
         linewidth=2, edgecolor="red", facecolor="none", linestyle="--",
@@ -147,7 +141,7 @@ def main():
     ax.spines["right"].set_visible(False)
     ax.spines["top"].set_visible(False)
 
-    fig.colorbar(im, ax=ax, fraction=0.02, pad=0.15)
+    fig.colorbar(im, ax=ax, fraction=0.02, pad=0.1)
 
     plt.savefig("heatmap_example.png", dpi=150, bbox_inches="tight")
     print("Saved heatmap_example.png")

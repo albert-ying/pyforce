@@ -858,17 +858,23 @@ def _create_margin_connector(
     label_y: float,
     point_radius: float,
     margin_position: str,
-    final_segment_length: float = 0.05,
+    elbow_x: float,
+    label_align_x: float,
 ) -> Path:
     """
     Create a three-segment connector for margin-aligned labels.
 
-    Structure (for left/right margins):
-    1. First segment: LONG horizontal from dot toward margin
-    2. Second segment: diagonal connecting to label y-level
-    3. Third segment: VERY SHORT horizontal to label
+    All connectors have aligned elbow points to prevent overlap:
+    1. First segment: horizontal from dot to elbow_x (all end at same X)
+    2. Second segment: diagonal from elbow to label_align_x
+    3. Third segment: short horizontal from label_align_x to label
 
-    The first segment is the longest, the third is the shortest.
+    Parameters
+    ----------
+    elbow_x : float
+        X position where all first segments end (vertical alignment)
+    label_align_x : float
+        X position where all third segments start (vertical alignment)
     """
     if margin_position in ("right", "left"):
         direction = 1 if margin_position == "right" else -1
@@ -877,32 +883,24 @@ def _create_margin_connector(
         start_x = point_x + direction * point_radius
         start_y = point_y
 
-        # End at label (with tiny gap)
+        # First segment ends at elbow_x (same for all connectors)
+        seg1_end_x = elbow_x
+        seg1_end_y = point_y
+
+        # Third segment starts at label_align_x (same for all connectors)
+        seg3_start_x = label_align_x
+        seg3_start_y = label_y
+
+        # End at label
         end_x = label_x
         end_y = label_y
 
-        # Third segment is VERY SHORT (just before label)
-        seg3_start_x = label_x - direction * final_segment_length
-        seg3_start_y = label_y
-
-        # First segment is LONG - goes most of the way, staying at dot's y level
-        # The elbow (seg1_end) is where we start the diagonal
-        total_horiz_dist = abs(seg3_start_x - start_x)
-        # First segment takes most of the horizontal distance (80%)
-        seg1_end_x = start_x + direction * (total_horiz_dist * 0.8)
-        seg1_end_y = point_y
-
-        vertices = np.array(
-            [
-                [start_x, start_y],  # Start at dot
-                [seg1_end_x, seg1_end_y],  # End of long horizontal
-                [
-                    seg3_start_x,
-                    seg3_start_y,
-                ],  # Start of short horizontal (after diagonal)
-                [end_x, end_y],  # At label
-            ]
-        )
+        vertices = np.array([
+            [start_x, start_y],
+            [seg1_end_x, seg1_end_y],
+            [seg3_start_x, seg3_start_y],
+            [end_x, end_y],
+        ])
     else:
         # Vertical orientation (top/bottom)
         direction = 1 if margin_position == "top" else -1
@@ -910,17 +908,15 @@ def _create_margin_connector(
         start_x = point_x
         start_y = point_y + direction * point_radius
 
+        # For vertical, elbow_x becomes elbow_y, label_align_x becomes label_align_y
+        seg1_end_x = point_x
+        seg1_end_y = elbow_x  # Using elbow_x as elbow_y for vertical
+
+        seg3_start_x = label_x
+        seg3_start_y = label_align_x  # Using label_align_x as label_align_y
+
         end_x = label_x
         end_y = label_y
-
-        # Third segment VERY SHORT
-        seg3_start_x = label_x
-        seg3_start_y = label_y - direction * final_segment_length
-
-        # First segment LONG
-        total_vert_dist = abs(seg3_start_y - start_y)
-        seg1_end_x = point_x
-        seg1_end_y = start_y + direction * (total_vert_dist * 0.8)
 
         vertices = np.array(
             [
@@ -1104,7 +1100,6 @@ def annotate_margin(
         return artists
 
     # CRITICAL: Sort by y position (highest first) to prevent line crossing
-    # The label at rank 1 (top) connects to the dot at rank 1 (highest y)
     if side in ("right", "left"):
         point_data.sort(key=lambda p: p["y"], reverse=True)
     elif side in ("top", "bottom"):
@@ -1114,41 +1109,47 @@ def annotate_margin(
 
     # Calculate margin position and label positions
     if side in ("right", "left"):
-        # Horizontal margin
+        direction = 1 if side == "right" else -1
+        
+        # Margin position (where labels are)
         if margin_x is None:
             if side == "right":
-                margin_x = xlim[1] - x_range * 0.01  # Slightly inside limit
+                margin_x = xlim[1] - x_range * 0.01
             else:
                 margin_x = xlim[0] + x_range * 0.01
 
-        # Minimum spacing between labels (to prevent text overlap)
+        # Calculate aligned X positions for clean non-overlapping lines:
+        # - elbow_x: where ALL first horizontal segments END
+        # - label_align_x: where ALL third horizontal segments START
+        
+        # Find the rightmost/leftmost dot to determine elbow position
+        if side == "right":
+            max_dot_x = max(p["x"] for p in point_data)
+            elbow_x = max_dot_x + x_range * 0.15  # All first segments end here
+            label_align_x = margin_x - x_range * 0.02  # All third segments start here
+        else:
+            min_dot_x = min(p["x"] for p in point_data)
+            elbow_x = min_dot_x - x_range * 0.15
+            label_align_x = margin_x + x_range * 0.02
+
+        # Minimum spacing between labels
         min_spacing = label_spacing if label_spacing else y_range * 0.03
 
-        # Calculate label y positions:
-        # - Start at the dot's y position
-        # - Only adjust if would overlap with previous label
-        label_y_positions = []
-        for i, p in enumerate(point_data):
-            if i == 0:
-                label_y_positions.append(p["y"])
-            else:
-                prev_label_y = label_y_positions[-1]
-                dot_y = p["y"]
-                # Labels go top to bottom, so new label should be at or below prev - min_spacing
-                max_allowed_y = prev_label_y - min_spacing
-                # Use dot's y if possible, otherwise push down
-                label_y_positions.append(min(dot_y, max_allowed_y))
+        # Calculate label y positions - CENTER labels vertically in plot
+        # and ensure they maintain the same rank order as dots
+        total_label_height = (n_labels - 1) * min_spacing
+        y_center = (ylim[0] + ylim[1]) / 2
+        y_start = y_center + total_label_height / 2
+        
+        label_y_positions = [y_start - i * min_spacing for i in range(n_labels)]
 
         ha = "left" if side == "right" else "right"
-
-        # Final segment length (very short horizontal before label)
-        final_seg_len = x_range * 0.02
 
         for i, p in enumerate(point_data):
             label_y = label_y_positions[i]
             label_x = margin_x
 
-            # Create 3-segment connector: long horiz → diagonal → short horiz
+            # Create 3-segment connector with aligned positions
             path = _create_margin_connector(
                 p["x"],
                 p["y"],
@@ -1156,7 +1157,8 @@ def annotate_margin(
                 label_y,
                 point_radius,
                 side,
-                final_seg_len,
+                elbow_x,
+                label_align_x,
             )
 
             patch = PathPatch(
