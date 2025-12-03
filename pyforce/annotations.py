@@ -7,7 +7,8 @@ with automatic label positioning and smart connector lines, inspired by R's ggfo
 
 import warnings
 from dataclasses import dataclass
-from typing import List, Optional, Tuple, Union
+from enum import Enum
+from typing import List, Literal, Optional, Tuple, Union
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -27,14 +28,22 @@ except ImportError:
     )
 
 
+class ConnectorType(Enum):
+    """Types of connector lines."""
+    HORIZONTAL = "horizontal"  # Simple horizontal line (like the paper example)
+    ELBOW = "elbow"            # Diagonal + horizontal segments
+    STRAIGHT = "straight"      # Direct line from point to label
+
+
 @dataclass
 class ConnectorStyle:
     """Configuration for connector line style."""
-
-    linewidth: float = 1.0
+    linewidth: float = 0.8
     color: str = "gray"
+    connector_type: ConnectorType = ConnectorType.HORIZONTAL
     elbow_angle: float = 45.0
-    min_distance: float = 0.3
+    min_distance: float = 0.1
+    gap: float = 0.02  # Gap between connector end and text
 
 
 def _get_data_scale(ax: plt.Axes) -> Tuple[float, float]:
@@ -50,123 +59,163 @@ def _get_data_scale(ax: plt.Axes) -> Tuple[float, float]:
 
 
 def _point_size_to_radius(point_size: float, ax: plt.Axes) -> float:
-    """
-    Convert matplotlib point size to radius in data units.
-
-    Uses the actual axes transformation for accurate conversion.
-    """
+    """Convert matplotlib point size to radius in data units."""
     x_scale, y_scale = _get_data_scale(ax)
     avg_scale = (x_scale + y_scale) / 2
 
-    # Point size is area in points^2, radius in points = sqrt(size/pi)
     radius_points = np.sqrt(point_size / np.pi)
-    # Convert to data units (72 points per inch)
     radius_data = radius_points * avg_scale * 0.8
 
     return radius_data
 
 
-def _create_elbow_connector(
-    start_x: float,
-    start_y: float,
-    end_x: float,
-    end_y: float,
-    start_radius: float = 0.0,
-    elbow_angle: float = 45.0,
+def _create_horizontal_connector(
+    point_x: float,
+    point_y: float,
+    label_x: float,
+    label_y: float,
+    point_radius: float = 0.0,
+    gap: float = 0.02,
 ) -> Path:
     """
-    Create an elbow connector path from start to end point.
-
-    The connector has two segments:
-    1. Diagonal segment from start (offset by radius) at the specified angle
-    2. Horizontal segment connecting to end point
-
-    Parameters
-    ----------
-    start_x, start_y : float
-        Starting point coordinates (e.g., data point or hull edge)
-    end_x, end_y : float
-        Ending point coordinates (e.g., label position)
-    start_radius : float
-        Offset from start point (to start from edge of marker)
-    elbow_angle : float
-        Angle of the diagonal segment in degrees (default 45)
-
-    Returns
-    -------
-    Path
-        Matplotlib Path object for the connector
+    Create a horizontal connector from point edge to label.
+    
+    This creates a simple horizontal line at the point's Y level,
+    starting from the point edge and ending near the label.
     """
-    dx = end_x - start_x
-    dy = end_y - start_y
+    dx = label_x - point_x
+    direction = np.sign(dx) if dx != 0 else 1
+    
+    # Start from edge of point
+    start_x = point_x + direction * point_radius
+    start_y = point_y
+    
+    # End before the label (with gap)
+    end_x = label_x - direction * gap
+    end_y = point_y  # Stay at point's Y level for horizontal
+    
+    vertices = np.array([[start_x, start_y], [end_x, end_y]])
+    codes = [Path.MOVETO, Path.LINETO]
+    
+    return Path(vertices, codes)
+
+
+def _create_elbow_connector(
+    point_x: float,
+    point_y: float,
+    label_x: float,
+    label_y: float,
+    point_radius: float = 0.0,
+    elbow_angle: float = 45.0,
+    gap: float = 0.02,
+) -> Path:
+    """
+    Create an elbow connector (diagonal + horizontal segments).
+    """
+    dx = label_x - point_x
+    dy = label_y - point_y
     dist = np.sqrt(dx**2 + dy**2)
 
     if dist < 1e-10:
-        return Path(np.array([[start_x, start_y]]), [Path.MOVETO])
+        return Path(np.array([[point_x, point_y]]), [Path.MOVETO])
 
-    # Calculate actual start point (offset from center by radius)
+    # Start from edge of point
     unit_dx = dx / dist
     unit_dy = dy / dist
-    actual_start_x = start_x + unit_dx * start_radius
-    actual_start_y = start_y + unit_dy * start_radius
+    start_x = point_x + unit_dx * point_radius
+    start_y = point_y + unit_dy * point_radius
 
-    # Elbow point: horizontal segment is at end_y height
-    elbow_y = end_y
-
-    # Calculate elbow x position based on desired angle
+    # Elbow at label's Y height
+    elbow_y = label_y
+    
+    # Calculate elbow x based on angle
     angle_rad = np.radians(elbow_angle)
-    vertical_dist = abs(elbow_y - actual_start_y)
+    vertical_dist = abs(elbow_y - start_y)
 
     if vertical_dist > 1e-10:
-        # Calculate horizontal distance for desired angle
         desired_horiz = vertical_dist / np.tan(angle_rad)
-        max_horiz = abs(end_x - actual_start_x)
+        max_horiz = abs(label_x - start_x) - gap
 
         if desired_horiz < max_horiz * 0.85:
-            elbow_x = actual_start_x + np.sign(dx) * desired_horiz
+            elbow_x = start_x + np.sign(dx) * desired_horiz
         else:
-            # Fallback: transition at 65% of the way
-            elbow_x = actual_start_x + dx * 0.65
+            elbow_x = start_x + (label_x - start_x - np.sign(dx) * gap) * 0.65
     else:
-        # Nearly horizontal: just use straight line
-        elbow_x = actual_start_x + dx * 0.5
-        elbow_y = actual_start_y + dy * 0.5
+        # Nearly horizontal
+        elbow_x = start_x + (label_x - start_x) * 0.5
+        elbow_y = start_y + dy * 0.5
 
-    vertices = np.array(
-        [[actual_start_x, actual_start_y], [elbow_x, elbow_y], [end_x, end_y]]
-    )
+    # End point (with gap before label)
+    end_x = label_x - np.sign(dx) * gap
+    end_y = label_y
+
+    vertices = np.array([[start_x, start_y], [elbow_x, elbow_y], [end_x, end_y]])
     codes = [Path.MOVETO, Path.LINETO, Path.LINETO]
+
+    return Path(vertices, codes)
+
+
+def _create_straight_connector(
+    point_x: float,
+    point_y: float,
+    label_x: float,
+    label_y: float,
+    point_radius: float = 0.0,
+    gap: float = 0.02,
+) -> Path:
+    """Create a straight line connector from point edge to label."""
+    dx = label_x - point_x
+    dy = label_y - point_y
+    dist = np.sqrt(dx**2 + dy**2)
+
+    if dist < 1e-10:
+        return Path(np.array([[point_x, point_y]]), [Path.MOVETO])
+
+    unit_dx = dx / dist
+    unit_dy = dy / dist
+
+    start_x = point_x + unit_dx * point_radius
+    start_y = point_y + unit_dy * point_radius
+    end_x = label_x - unit_dx * gap
+    end_y = label_y - unit_dy * gap
+
+    vertices = np.array([[start_x, start_y], [end_x, end_y]])
+    codes = [Path.MOVETO, Path.LINETO]
 
     return Path(vertices, codes)
 
 
 def _draw_connector(
     ax: plt.Axes,
-    start_x: float,
-    start_y: float,
-    end_x: float,
-    end_y: float,
-    start_radius: float,
+    point_x: float,
+    point_y: float,
+    label_x: float,
+    label_y: float,
+    point_radius: float,
     style: ConnectorStyle,
 ) -> Optional[PathPatch]:
-    """
-    Draw an elbow connector between two points.
-
-    Returns None if distance is below minimum threshold.
-    """
-    dist = np.sqrt((end_x - start_x) ** 2 + (end_y - start_y) ** 2)
+    """Draw a connector between point and label."""
+    dist = np.sqrt((label_x - point_x) ** 2 + (label_y - point_y) ** 2)
 
     if dist < style.min_distance:
         return None
 
-    path = _create_elbow_connector(
-        start_x,
-        start_y,
-        end_x,
-        end_y,
-        start_radius=start_radius,
-        elbow_angle=style.elbow_angle,
-    )
+    # Select connector type
+    if style.connector_type == ConnectorType.HORIZONTAL:
+        path = _create_horizontal_connector(
+            point_x, point_y, label_x, label_y,
+            point_radius=point_radius, gap=style.gap
+        )
+    elif style.connector_type == ConnectorType.ELBOW:
+        path = _create_elbow_connector(
+            point_x, point_y, label_x, label_y,
+            point_radius=point_radius, elbow_angle=style.elbow_angle, gap=style.gap
+        )
+    else:  # STRAIGHT
+        path = _create_straight_connector(
+            point_x, point_y, label_x, label_y,
+            point_radius=point_radius, gap=style.gap
+        )
 
     patch = PathPatch(
         path,
@@ -182,18 +231,72 @@ def _draw_connector(
     return patch
 
 
-def _adjust_text_alignment(text_obj: plt.Text, point_x: float, point_y: float) -> None:
-    """Adjust text alignment based on position relative to point."""
-    label_x, label_y = text_obj.get_position()
-    dx = label_x - point_x
-
-    # Horizontal alignment based on direction
-    if abs(dx) > 0.01:
-        text_obj.set_ha("left" if dx > 0 else "right")
-    else:
-        text_obj.set_ha("center")
-
-    text_obj.set_va("center")
+def _compute_smart_label_positions(
+    ax: plt.Axes,
+    x: np.ndarray,
+    y: np.ndarray,
+    indices: np.ndarray,
+    labels: List[str],
+    point_radius: float,
+    label_fontsize: int,
+    prefer_direction: str = "right",
+    offset_factor: float = 2.5,
+) -> List[Tuple[float, float, str]]:
+    """
+    Compute smart initial positions for labels.
+    
+    Returns list of (x, y, ha) tuples where ha is horizontal alignment.
+    Prefers placing labels to the right, but switches to left near edges
+    or when it would reduce overlap.
+    """
+    xlim = ax.get_xlim()
+    x_range = xlim[1] - xlim[0]
+    
+    # Base offset for labels
+    base_offset = point_radius * offset_factor
+    
+    positions = []
+    
+    for idx, label in zip(indices, labels):
+        if idx >= len(x):
+            continue
+            
+        px, py = x[idx], y[idx]
+        
+        # Determine direction based on position in plot
+        # Default to right, but use left if point is in right 30% of plot
+        # or if there are many points to the right
+        
+        right_edge_threshold = xlim[1] - 0.3 * x_range
+        left_edge_threshold = xlim[0] + 0.3 * x_range
+        
+        # Count nearby points on each side
+        nearby_mask = np.abs(y - py) < (point_radius * 5)
+        points_to_right = np.sum((x[nearby_mask] > px) & (x[nearby_mask] < px + base_offset * 3))
+        points_to_left = np.sum((x[nearby_mask] < px) & (x[nearby_mask] > px - base_offset * 3))
+        
+        # Decision logic for direction
+        if px > right_edge_threshold:
+            direction = "left"
+        elif px < left_edge_threshold:
+            direction = "right"
+        elif points_to_right > points_to_left + 2:
+            direction = "left"
+        else:
+            direction = prefer_direction
+        
+        if direction == "right":
+            label_x = px + base_offset
+            ha = "left"
+        else:
+            label_x = px - base_offset
+            ha = "right"
+        
+        label_y = py  # Keep at same Y level for horizontal connectors
+        
+        positions.append((label_x, label_y, ha))
+    
+    return positions
 
 
 def annotate_points(
@@ -203,26 +306,32 @@ def annotate_points(
     labels: List[str],
     indices: Optional[np.ndarray] = None,
     point_size: float = 40,
-    min_distance_for_connector: float = 0.3,
+    min_distance_for_connector: float = 0.1,
     label_fontsize: int = 10,
     label_fontweight: str = "normal",
     label_color: str = "black",
-    connection_linewidth: float = 1.0,
-    connection_color: str = "black",
+    connection_linewidth: float = 0.8,
+    connection_color: str = "gray",
+    connector_type: Literal["horizontal", "elbow", "straight"] = "horizontal",
     elbow_angle: float = 45.0,
+    connector_gap: float = 0.02,
+    prefer_direction: str = "right",
+    offset_factor: float = 2.5,
     force_points: float = 1.0,
-    force_text: float = 0.8,
+    force_text: float = 0.5,
     expand_points: float = 2.0,
-    expand_text: float = 1.5,
+    expand_text: float = 1.2,
     use_adjust_text: bool = True,
+    only_move_text: str = "x",
 ) -> List[plt.Artist]:
     """
-    Annotate points with smart elbow connectors and collision-free labels.
-
-    Labels are automatically positioned to avoid overlaps with points and each other.
-    Elbow connectors (diagonal + horizontal segments) are drawn from marker edges
-    to label positions.
-
+    Annotate points with smart connectors and collision-free labels.
+    
+    Supports three connector styles:
+    - "horizontal": Simple horizontal lines (like scientific papers)
+    - "elbow": Diagonal + horizontal segments
+    - "straight": Direct lines from point to label
+    
     Parameters
     ----------
     ax : matplotlib.axes.Axes
@@ -232,10 +341,10 @@ def annotate_points(
     labels : list of str
         Text labels for points to annotate
     indices : array-like, optional
-        Indices of points to annotate. If None, annotates all points.
+        Indices of points to annotate. If None, annotates all.
     point_size : float, default=40
-        Size of scatter points (for calculating edge offset)
-    min_distance_for_connector : float, default=0.3
+        Size of scatter points (for edge offset calculation)
+    min_distance_for_connector : float, default=0.1
         Minimum distance before drawing a connector
     label_fontsize : int, default=10
         Font size for labels
@@ -243,27 +352,37 @@ def annotate_points(
         Font weight for labels
     label_color : str, default='black'
         Text color
-    connection_linewidth : float, default=1.0
+    connection_linewidth : float, default=0.8
         Line width for connectors
     connection_color : str, default='gray'
         Line color for connectors
+    connector_type : str, default='horizontal'
+        Type of connector: 'horizontal', 'elbow', or 'straight'
     elbow_angle : float, default=45.0
-        Angle of the diagonal segment in degrees
+        Angle for elbow connectors (degrees)
+    connector_gap : float, default=0.02
+        Gap between connector end and text
+    prefer_direction : str, default='right'
+        Preferred direction for label placement ('right' or 'left')
+    offset_factor : float, default=2.5
+        Multiplier for label offset from point
     force_points : float, default=1.0
-        Repulsion force from points (higher = more repulsion)
-    force_text : float, default=0.8
-        Repulsion force between texts
+        Repulsion force from points
+    force_text : float, default=0.5
+        Repulsion force between labels
     expand_points : float, default=2.0
         Expansion factor for point collision boxes
-    expand_text : float, default=1.5
+    expand_text : float, default=1.2
         Expansion factor for text collision boxes
     use_adjust_text : bool, default=True
-        Whether to use adjustText for automatic label positioning
-
+        Whether to use adjustText for positioning
+    only_move_text : str, default='x'
+        Direction to move text: 'x', 'y', or 'xy'
+    
     Returns
     -------
     list of matplotlib.artist.Artist
-        List of artists created (text objects and connector patches)
+        List of created artists
     """
     x = np.asarray(x)
     y = np.asarray(y)
@@ -279,11 +398,17 @@ def annotate_points(
     text_objects = []
     point_positions = []
 
-    # Calculate point radius for edge offset
+    # Calculate point radius
     point_radius = _point_size_to_radius(point_size, ax)
+    
+    # Get smart initial positions
+    initial_positions = _compute_smart_label_positions(
+        ax, x, y, indices, labels, point_radius, label_fontsize,
+        prefer_direction=prefer_direction, offset_factor=offset_factor
+    )
 
-    # Create text objects at offset positions initially
-    for idx, label in zip(indices, labels):
+    # Create text objects at computed positions
+    for (idx, label), (lx, ly, ha) in zip(zip(indices, labels), initial_positions):
         if idx >= len(x):
             warnings.warn(f"Index {idx} out of bounds for data of length {len(x)}")
             continue
@@ -291,22 +416,27 @@ def annotate_points(
         point_x, point_y = x[idx], y[idx]
         point_positions.append((point_x, point_y))
 
-        # Initial position: offset from point
         text_obj = ax.text(
-            point_x,
-            point_y,
-            label,
+            lx, ly, label,
             fontsize=label_fontsize,
             fontweight=label_fontweight,
             color=label_color,
-            ha="center",
+            ha=ha,
             va="center",
             zorder=10,
         )
         text_objects.append(text_obj)
 
-    # Use adjustText for collision-free positioning
+    # Use adjustText to refine positions
     if use_adjust_text and HAS_ADJUST_TEXT and text_objects:
+        # Configure movement direction
+        if only_move_text == "x":
+            only_move = {"points": "x", "text": "x"}
+        elif only_move_text == "y":
+            only_move = {"points": "y", "text": "y"}
+        else:
+            only_move = {"points": "xy", "text": "xy"}
+        
         adjust_text(
             text_objects,
             x=x,
@@ -316,33 +446,38 @@ def annotate_points(
             expand_text=(expand_text, expand_text),
             force_points=(force_points, force_points),
             force_text=(force_text, force_text),
-            lim=3000,
-            only_move={"points": "xy", "text": "xy"},
+            lim=2000,
+            only_move=only_move,
             avoid_self=True,
         )
 
-    # Draw connectors AFTER text positioning
+    # Determine connector type
+    connector_type_enum = {
+        "horizontal": ConnectorType.HORIZONTAL,
+        "elbow": ConnectorType.ELBOW,
+        "straight": ConnectorType.STRAIGHT,
+    }.get(connector_type, ConnectorType.HORIZONTAL)
+
     connector_style = ConnectorStyle(
         linewidth=connection_linewidth,
         color=connection_color,
+        connector_type=connector_type_enum,
         elbow_angle=elbow_angle,
         min_distance=min_distance_for_connector,
+        gap=connector_gap,
     )
 
+    # Draw connectors
     for text_obj, (point_x, point_y) in zip(text_objects, point_positions):
         label_x, label_y = text_obj.get_position()
 
-        # Adjust text alignment based on direction
-        _adjust_text_alignment(text_obj, point_x, point_y)
+        # Update alignment based on final position
+        dx = label_x - point_x
+        text_obj.set_ha("left" if dx > 0 else "right")
 
-        # Draw connector
         connector = _draw_connector(
-            ax,
-            point_x,
-            point_y,
-            label_x,
-            label_y,
-            start_radius=point_radius,
+            ax, point_x, point_y, label_x, label_y,
+            point_radius=point_radius,
             style=connector_style,
         )
 
@@ -407,20 +542,19 @@ def geom_mark_hull(
     label_fontweight: str = "bold",
     label_color: str = "black",
     label_buffer_factor: float = 0.25,
-    connection_linewidth: float = 1.5,
+    connection_linewidth: float = 1.0,
     connection_color: str = "black",
+    connector_type: Literal["horizontal", "elbow", "straight"] = "horizontal",
     elbow_angle: float = 45.0,
-    min_distance_for_connector: float = 0.2,
+    connector_gap: float = 0.02,
+    min_distance_for_connector: float = 0.1,
     force_points: float = 0.8,
     force_text: float = 1.0,
     use_adjust_text: bool = True,
 ) -> List[plt.Artist]:
     """
-    Annotate groups of points with convex hulls and smart elbow connectors.
-
-    Each group is enclosed by a smooth convex hull with a label connected
-    via an elbow connector. Labels are positioned to avoid overlaps.
-
+    Annotate groups of points with convex hulls and smart connectors.
+    
     Parameters
     ----------
     ax : matplotlib.axes.Axes
@@ -428,11 +562,11 @@ def geom_mark_hull(
     x, y : array-like
         Point coordinates
     groups : array-like, optional
-        Group membership for each point. If None, treats all as one group.
+        Group membership for each point
     labels : list of str, optional
         Labels for each group
     descriptions : list of str, optional
-        Additional description text for each group
+        Additional description text
     hull_color : str or list, default='black'
         Hull boundary color(s)
     hull_fill : str or list, optional
@@ -440,38 +574,42 @@ def geom_mark_hull(
     hull_alpha : float, default=0.2
         Fill transparency
     hull_linewidth : float, default=2.0
-        Hull boundary line width
+        Hull line width
     expand_factor : float, default=0.12
-        Hull expansion factor (0.12 = 12% larger)
+        Hull expansion factor
     smoothness : int, default=150
         Points for hull smoothing
     label_fontsize : int, default=12
-        Font size for labels
+        Font size
     label_fontweight : str, default='bold'
-        Font weight for labels
+        Font weight
     label_color : str, default='black'
-        Text color for labels
+        Text color
     label_buffer_factor : float, default=0.25
-        Distance factor from hull to place label
-    connection_linewidth : float, default=1.5
+        Distance from hull to label
+    connection_linewidth : float, default=1.0
         Connector line width
     connection_color : str, default='black'
-        Connector line color
+        Connector color
+    connector_type : str, default='horizontal'
+        Connector style: 'horizontal', 'elbow', or 'straight'
     elbow_angle : float, default=45.0
-        Angle of connector diagonal segment
-    min_distance_for_connector : float, default=0.2
-        Minimum distance before drawing connector
+        Angle for elbow connectors
+    connector_gap : float, default=0.02
+        Gap between connector and text
+    min_distance_for_connector : float, default=0.1
+        Minimum distance for connector
     force_points : float, default=0.8
-        Repulsion force from points
+        Repulsion from points
     force_text : float, default=1.0
-        Repulsion force between texts
+        Repulsion between labels
     use_adjust_text : bool, default=True
-        Whether to use adjustText
-
+        Use adjustText
+    
     Returns
     -------
     list of matplotlib.artist.Artist
-        List of artists created
+        Created artists
     """
     x = np.asarray(x)
     y = np.asarray(y)
@@ -484,7 +622,6 @@ def geom_mark_hull(
     unique_groups = np.unique(groups)
     n_groups = len(unique_groups)
 
-    # Prepare labels and descriptions
     if labels is None:
         labels = [f"Group {i+1}" for i in range(n_groups)]
     elif isinstance(labels, str):
@@ -495,7 +632,6 @@ def geom_mark_hull(
     elif isinstance(descriptions, str):
         descriptions = [descriptions]
 
-    # Normalize colors to lists
     hull_colors = (
         [hull_color] * n_groups if isinstance(hull_color, str) else list(hull_color)
     )
@@ -508,7 +644,7 @@ def geom_mark_hull(
 
     artists = []
     text_objects = []
-    hull_data = []  # Store hull info for connector drawing after adjustText
+    hull_data = []
 
     for i, group in enumerate(unique_groups):
         mask = groups == group
@@ -518,13 +654,11 @@ def geom_mark_hull(
             warnings.warn(f"Group {group} has fewer than 3 points, skipping hull")
             continue
 
-        # Compute and smooth hull
         hull = ConvexHull(group_points)
         hull_vertices = group_points[hull.vertices]
         hull_vertices = _expand_polygon(hull_vertices, expand_factor)
         smooth_vertices = _smooth_polygon(hull_vertices, smoothness)
 
-        # Draw hull patch
         color_idx = i % len(hull_colors)
         fill_idx = i % len(hull_fills)
 
@@ -540,19 +674,18 @@ def geom_mark_hull(
         ax.add_patch(hull_patch)
         artists.append(hull_patch)
 
-        # Calculate initial label position
+        # Label position
         min_xy = np.min(smooth_vertices, axis=0)
         max_xy = np.max(smooth_vertices, axis=0)
         center = (min_xy + max_xy) / 2
         size = max_xy - min_xy
         buffer = label_buffer_factor * max(size)
 
-        # Choose best position (furthest from all points)
         candidates = [
-            (center[0], max_xy[1] + buffer),  # top
-            (center[0], min_xy[1] - buffer),  # bottom
-            (max_xy[0] + buffer, center[1]),  # right
-            (min_xy[0] - buffer, center[1]),  # left
+            (center[0], max_xy[1] + buffer),
+            (center[0], min_xy[1] - buffer),
+            (max_xy[0] + buffer, center[1]),
+            (min_xy[0] - buffer, center[1]),
         ]
 
         best_pos = max(
@@ -562,15 +695,12 @@ def geom_mark_hull(
             ),
         )
 
-        # Create label text
         label_text = labels[i % len(labels)]
         if descriptions[i % len(descriptions)]:
             label_text = f"{label_text}\n{descriptions[i % len(descriptions)]}"
 
         text_obj = ax.text(
-            best_pos[0],
-            best_pos[1],
-            label_text,
+            best_pos[0], best_pos[1], label_text,
             fontsize=label_fontsize,
             fontweight=label_fontweight,
             color=label_color,
@@ -580,16 +710,12 @@ def geom_mark_hull(
         )
         text_objects.append(text_obj)
 
-        # Store hull data for connector drawing
-        hull_data.append(
-            {
-                "vertices": smooth_vertices,
-                "text_obj": text_obj,
-                "color": hull_colors[color_idx],
-            }
-        )
+        hull_data.append({
+            "vertices": smooth_vertices,
+            "text_obj": text_obj,
+            "color": hull_colors[color_idx],
+        })
 
-    # Adjust text positions to avoid overlaps
     if use_adjust_text and HAS_ADJUST_TEXT and text_objects:
         adjust_text(
             text_objects,
@@ -604,34 +730,35 @@ def geom_mark_hull(
             only_move={"points": "xy", "text": "xy"},
         )
 
-    # Draw elbow connectors AFTER text positioning
+    # Connector type
+    connector_type_enum = {
+        "horizontal": ConnectorType.HORIZONTAL,
+        "elbow": ConnectorType.ELBOW,
+        "straight": ConnectorType.STRAIGHT,
+    }.get(connector_type, ConnectorType.HORIZONTAL)
+
     connector_style = ConnectorStyle(
         linewidth=connection_linewidth,
         color=connection_color,
+        connector_type=connector_type_enum,
         elbow_angle=elbow_angle,
         min_distance=min_distance_for_connector,
+        gap=connector_gap,
     )
 
     for data in hull_data:
         text_obj = data["text_obj"]
         label_x, label_y = text_obj.get_position()
 
-        # Find nearest hull edge point to label
         hull_x, hull_y = _find_hull_edge_point(data["vertices"], label_x, label_y)
 
-        # Adjust text alignment
         dx = label_x - hull_x
         text_obj.set_ha("left" if dx > 0 else "right")
         text_obj.set_va("center")
 
-        # Draw elbow connector from hull edge to label
         connector = _draw_connector(
-            ax,
-            hull_x,
-            hull_y,
-            label_x,
-            label_y,
-            start_radius=0,  # Start from hull edge directly
+            ax, hull_x, hull_y, label_x, label_y,
+            point_radius=0,
             style=connector_style,
         )
 
