@@ -7,8 +7,8 @@ PyForce brings the elegant annotation capabilities of R's [ggforce](https://gith
 ## Features
 
 **Smart Point Annotations** with `annotate_points()`:
-- Three connector styles: `horizontal`, `elbow`, or `straight`
-- Horizontal mode matches publication-quality scientific figures
+- Smart elbow connectors that adapt to label position
+- Automatically chooses best orientation (horizontal-first or diagonal-first)
 - Lines start from marker edges, not centers
 - Smart direction selection (prefers right, switches to left near edges)
 - Automatic text alignment based on label position
@@ -18,7 +18,7 @@ PyForce brings the elegant annotation capabilities of R's [ggforce](https://gith
 **Convex Hull Groupings** with `geom_mark_hull()`:
 - Smooth, expanded boundaries around point groups
 - Cubic spline interpolation for aesthetic curves
-- Same connector options as point annotations
+- Same smart connector logic as point annotations
 - Smart label positioning away from data points
 
 ## Installation
@@ -130,43 +130,11 @@ plt.show()
 
 ![Hull Annotation Example](assets/hull_example.png)
 
-### Paper-Style Annotations
-
-For publication-quality figures with horizontal connectors:
-
-```python
-import matplotlib.pyplot as plt
-import numpy as np
-from pyforce import annotate_points
-
-# Data
-names = ["CPLX2", "CPLX1", "OLFM1", "NRXN3.2", "STMN2", "FGF4", 
-         "LANCL1", "NPTXR", "CNDP1", "ALDOC"]
-bootstrap = np.array([85, 78, 92, 45, 55, 95, 12, 88, 75, 98])
-coef = np.array([1.8, 1.2, 0.9, 0.6, 0.2, 0.1, -0.8, -1.2, -1.5, -2.0])
-
-fig, ax = plt.subplots(figsize=(8, 6))
-ax.scatter(bootstrap, coef, s=100, c="#008080")
-
-annotate_points(
-    ax, bootstrap, coef,
-    labels=names,
-    point_size=100,
-    connector_type="horizontal",  # Clean horizontal lines
-    prefer_direction="right",     # Labels prefer right side
-    only_move_text="x",           # Keep vertical alignment
-)
-
-plt.show()
-```
-
-![Paper Style Example](assets/paper_style_example.png)
-
 ## API Reference
 
 ### `annotate_points()`
 
-Annotate points with smart connectors.
+Annotate points with smart elbow connectors.
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
@@ -175,12 +143,9 @@ Annotate points with smart connectors.
 | `labels` | list[str] | required | Text labels for points |
 | `indices` | array-like | None | Indices of points to annotate |
 | `point_size` | float | 40 | Scatter point size for edge calculation |
-| `connector_type` | str | 'horizontal' | Connector style: 'horizontal', 'elbow', 'straight' |
 | `prefer_direction` | str | 'right' | Preferred label direction: 'right' or 'left' |
-| `only_move_text` | str | 'x' | Direction to move labels: 'x', 'y', or 'xy' |
 | `connection_linewidth` | float | 0.8 | Connector line width |
 | `connection_color` | str | 'gray' | Connector color |
-| `elbow_angle` | float | 45.0 | Angle for elbow connectors (degrees) |
 | `force_points` | float | 1.0 | Repulsion force from points |
 | `force_text` | float | 0.5 | Repulsion between labels |
 
@@ -198,7 +163,6 @@ Annotate groups with convex hulls and smart connectors.
 | `hull_fill` | str/list | None | Hull fill color(s) |
 | `hull_alpha` | float | 0.2 | Fill transparency |
 | `expand_factor` | float | 0.12 | Hull expansion factor |
-| `connector_type` | str | 'horizontal' | Style: 'horizontal', 'elbow', 'straight' |
 | `connection_linewidth` | float | 1.0 | Connector width |
 | `connection_color` | str | 'black' | Connector color |
 

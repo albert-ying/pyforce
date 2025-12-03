@@ -71,7 +71,7 @@ def _point_size_to_radius(point_size: float, ax: plt.Axes) -> float:
     return radius_data
 
 
-def _create_horizontal_connector(
+def _create_smart_elbow_connector(
     point_x: float,
     point_y: float,
     label_x: float,
@@ -80,43 +80,70 @@ def _create_horizontal_connector(
     gap: float = 0.02,
 ) -> Path:
     """
-    Create a smart elbow connector: horizontal from dot, then diagonal to text.
+    Create a smart elbow connector that chooses the best orientation.
 
-    This is the paper-style connector where:
-    1. Horizontal segment starts from dot edge at dot's Y level
-    2. If text is at different Y level, diagonal segment connects to text
+    Automatically decides between:
+    1. Horizontal from dot → diagonal to text (when text is mostly horizontally displaced)
+    2. Diagonal from dot → horizontal to text (when text is mostly vertically displaced)
     
-    The elbow/bend is near the TEXT, not near the dot.
+    The choice minimizes awkward angles and creates cleaner annotations.
     """
     dx = label_x - point_x
     dy = label_y - point_y
-    direction = np.sign(dx) if dx != 0 else 1
-
-    # Start from edge of point (horizontal direction)
-    start_x = point_x + direction * point_radius
-    start_y = point_y
-
-    # End point near the label
-    end_x = label_x - direction * gap
+    abs_dx = abs(dx)
+    abs_dy = abs(dy)
+    
+    # If very small displacement, just draw a straight line
+    if abs_dx < 0.01 and abs_dy < 0.01:
+        return Path(np.array([[point_x, point_y]]), [Path.MOVETO])
+    
+    direction_x = np.sign(dx) if dx != 0 else 1
+    direction_y = np.sign(dy) if dy != 0 else 1
+    
+    # Start from edge of point toward the label
+    dist = np.sqrt(dx**2 + dy**2)
+    start_x = point_x + (dx / dist) * point_radius if dist > 0 else point_x
+    start_y = point_y + (dy / dist) * point_radius if dist > 0 else point_y
+    
+    # End point near the label (with gap)
+    end_x = label_x - direction_x * gap if abs_dx > gap else label_x
     end_y = label_y
-
-    # Check if we need an elbow (text at different Y level)
-    if abs(dy) < 0.01:
-        # Text is at same Y level - simple horizontal line
+    
+    # Decide orientation based on displacement ratio
+    # If mostly horizontal displacement → horizontal first, then diagonal
+    # If mostly vertical displacement → diagonal first, then horizontal
+    
+    if abs_dy < 0.01:
+        # Pure horizontal - simple line
         vertices = np.array([[start_x, start_y], [end_x, end_y]])
         codes = [Path.MOVETO, Path.LINETO]
-    else:
-        # Text is at different Y level - elbow with bend near text
-        # Horizontal segment goes most of the way, then diagonal to text
-        # Elbow point: 70-85% of the way horizontally, at dot's Y level
-        horizontal_fraction = 0.75
-        elbow_x = start_x + (end_x - start_x) * horizontal_fraction
-        elbow_y = start_y  # Stay at dot's Y level for horizontal segment
-
+    elif abs_dx < 0.01:
+        # Pure vertical - simple line
+        vertices = np.array([[start_x, start_y], [end_x, end_y]])
+        codes = [Path.MOVETO, Path.LINETO]
+    elif abs_dx >= abs_dy:
+        # Mostly horizontal displacement → horizontal from dot, diagonal to text
+        # Elbow is near the TEXT (at ~75% of horizontal distance)
+        elbow_fraction = 0.75
+        elbow_x = start_x + (end_x - start_x) * elbow_fraction
+        elbow_y = start_y  # Stay at dot's Y level
+        
         vertices = np.array([
-            [start_x, start_y],  # Start at dot edge
-            [elbow_x, elbow_y],  # Elbow point (still at dot's Y)
-            [end_x, end_y]       # End at text
+            [start_x, start_y],
+            [elbow_x, elbow_y],
+            [end_x, end_y],
+        ])
+        codes = [Path.MOVETO, Path.LINETO, Path.LINETO]
+    else:
+        # Mostly vertical displacement → diagonal from dot, horizontal to text
+        # Elbow is near the TEXT (at label's Y level, ~25% from end horizontally)
+        elbow_x = end_x - (end_x - start_x) * 0.25
+        elbow_y = end_y  # At text's Y level
+        
+        vertices = np.array([
+            [start_x, start_y],
+            [elbow_x, elbow_y],
+            [end_x, end_y],
         ])
         codes = [Path.MOVETO, Path.LINETO, Path.LINETO]
 
@@ -225,7 +252,7 @@ def _draw_connector(
 
     # Select connector type
     if style.connector_type == ConnectorType.HORIZONTAL:
-        path = _create_horizontal_connector(
+        path = _create_smart_elbow_connector(
             point_x, point_y, label_x, label_y, point_radius=point_radius, gap=style.gap
         )
     elif style.connector_type == ConnectorType.ELBOW:
