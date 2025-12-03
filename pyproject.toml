@@ -3,14 +3,14 @@ requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "pyforce"
+name = "pyforce-plot"
 version = "0.1.0"
 description = "Python implementation of ggforce-style annotations for matplotlib"
 readme = "README.md"
 requires-python = ">=3.8"
 license = "MIT"
 authors = [
-    {name = "PyForce Contributors"}
+    {name = "Albert Ying", email = "albert.ying@example.com"}
 ]
 keywords = [
     "matplotlib",
@@ -49,10 +49,10 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/yourusername/pyforce"
-Documentation = "https://github.com/yourusername/pyforce#readme"
-Repository = "https://github.com/yourusername/pyforce"
-Issues = "https://github.com/yourusername/pyforce/issues"
+Homepage = "https://github.com/albert-ying/pyforce"
+Documentation = "https://github.com/albert-ying/pyforce#readme"
+Repository = "https://github.com/albert-ying/pyforce"
+Issues = "https://github.com/albert-ying/pyforce/issues"
 
 [tool.setuptools.packages.find]
 where = ["."]
