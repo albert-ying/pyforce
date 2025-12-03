@@ -40,7 +40,7 @@ def heatmap_example():
         "Factor_2",
     ]
 
-    ax.set_xlim(-0.5, n_cols - 0.2)
+    ax.set_xlim(-0.5, n_cols + 0.5)
 
     # Same annotate_edge() function - just specify x_start for heatmap
     annotate_edge(
@@ -53,7 +53,6 @@ def heatmap_example():
         label_color="black",
         line_color="dimgray",
         linewidth=0.7,
-        min_spacing=2.2,
     )
 
     rect = Rectangle(

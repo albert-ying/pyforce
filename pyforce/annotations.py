@@ -1264,6 +1264,7 @@ def annotate_edge(
     y_positions: List[float],
     labels: List[str],
     x_start: Optional[float] = None,
+    label_x: Optional[float] = None,
     side: Literal["right", "left"] = "right",
     label_fontsize: int = 9,
     label_color: str = "black",
@@ -1290,6 +1291,9 @@ def annotate_edge(
         Labels for each position
     x_start : float, optional
         X position where connectors start. If None, uses plot edge.
+    label_x : float, optional
+        X position where labels are placed. If None, defaults to x_start + 0.2
+        (or x_start - 0.2 for left side). Falls back to plot edge if x_start is also None.
     side : str, default='right'
         'right' or 'left'
     label_fontsize : int, default=9
@@ -1314,6 +1318,8 @@ def annotate_edge(
     >>> annotate_edge(ax, [10, 11, 12], ['A', 'B', 'C'], x_start=n_cols-0.5)
     >>> # For line plot
     >>> annotate_edge(ax, [y1[-1], y2[-1]], ['Line 1', 'Line 2'])
+    >>> # With custom label position
+    >>> annotate_edge(ax, [10, 11], ['A', 'B'], x_start=n_cols-0.5, label_x=n_cols+0.5)
     """
     xlim = ax.get_xlim()
     ylim = ax.get_ylim()
@@ -1322,7 +1328,18 @@ def annotate_edge(
 
     # Auto-calculate min_spacing if not provided
     if min_spacing is None:
-        min_spacing = y_range * 0.02
+        # Convert font size (points) to data coordinates
+        # 1 point = 1/72 inch
+        fig = ax.get_figure()
+        fig_height_inches = fig.get_figheight()
+        # Get axes height as fraction of figure
+        bbox = ax.get_position()
+        axes_height_inches = fig_height_inches * bbox.height
+        # Data units per inch (use abs for inverted axes like heatmaps)
+        data_per_inch = abs(y_range) / axes_height_inches
+        # Text height in data units (with 1.4x padding for comfortable spacing)
+        text_height_data = (label_fontsize / 72) * data_per_inch * 1.4
+        min_spacing = text_height_data
 
     # Sort by y position
     sorted_data = sorted(zip(y_positions, labels), key=lambda x: x[0])
@@ -1331,12 +1348,14 @@ def annotate_edge(
 
     if side == "right":
         edge_x = x_start if x_start is not None else xlim[1]
-        label_x = xlim[1] + 0.01
+        if label_x is None:
+            label_x = (x_start + 0.2) if x_start is not None else (xlim[1] + 0.01)
         ha = "left"
         direction = 1
     else:
         edge_x = x_start if x_start is not None else xlim[0]
-        label_x = xlim[0] - 0.01
+        if label_x is None:
+            label_x = (x_start - 0.2) if x_start is not None else (xlim[0] - 0.01)
         ha = "right"
         direction = -1
 
