@@ -858,61 +858,76 @@ def _create_margin_connector(
     label_y: float,
     point_radius: float,
     margin_position: str,
-    first_segment_length: float,
+    final_segment_length: float = 0.05,
 ) -> Path:
     """
     Create a three-segment connector for margin-aligned labels.
-    
-    Structure:
-    1. First segment from dot (horizontal for left/right, vertical for top/bottom)
-    2. Diagonal segment
-    3. Final segment to label (horizontal for left/right, vertical for top/bottom)
+
+    Structure (for left/right margins):
+    1. First segment: LONG horizontal from dot toward margin
+    2. Second segment: diagonal connecting to label y-level
+    3. Third segment: VERY SHORT horizontal to label
+
+    The first segment is the longest, the third is the shortest.
     """
     if margin_position in ("right", "left"):
-        # Horizontal orientation
         direction = 1 if margin_position == "right" else -1
-        
-        # First segment: horizontal from dot edge
+
+        # Start from edge of dot
         start_x = point_x + direction * point_radius
         start_y = point_y
-        seg1_end_x = start_x + direction * first_segment_length
-        seg1_end_y = point_y
-        
-        # Final segment: horizontal to label
-        seg3_start_x = label_x - direction * first_segment_length
-        seg3_start_y = label_y
+
+        # End at label (with tiny gap)
         end_x = label_x
         end_y = label_y
-        
-        vertices = np.array([
-            [start_x, start_y],
-            [seg1_end_x, seg1_end_y],
-            [seg3_start_x, seg3_start_y],
-            [end_x, end_y],
-        ])
+
+        # Third segment is VERY SHORT (just before label)
+        seg3_start_x = label_x - direction * final_segment_length
+        seg3_start_y = label_y
+
+        # First segment is LONG - goes most of the way, staying at dot's y level
+        # The elbow (seg1_end) is where we start the diagonal
+        total_horiz_dist = abs(seg3_start_x - start_x)
+        # First segment takes most of the horizontal distance (80%)
+        seg1_end_x = start_x + direction * (total_horiz_dist * 0.8)
+        seg1_end_y = point_y
+
+        vertices = np.array(
+            [
+                [start_x, start_y],      # Start at dot
+                [seg1_end_x, seg1_end_y],  # End of long horizontal
+                [seg3_start_x, seg3_start_y],  # Start of short horizontal (after diagonal)
+                [end_x, end_y],          # At label
+            ]
+        )
     else:
         # Vertical orientation (top/bottom)
         direction = 1 if margin_position == "top" else -1
-        
-        # First segment: vertical from dot edge
+
         start_x = point_x
         start_y = point_y + direction * point_radius
-        seg1_end_x = point_x
-        seg1_end_y = start_y + direction * first_segment_length
-        
-        # Final segment: vertical to label
-        seg3_start_x = label_x
-        seg3_start_y = label_y - direction * first_segment_length
+
         end_x = label_x
         end_y = label_y
-        
-        vertices = np.array([
-            [start_x, start_y],
-            [seg1_end_x, seg1_end_y],
-            [seg3_start_x, seg3_start_y],
-            [end_x, end_y],
-        ])
-    
+
+        # Third segment VERY SHORT
+        seg3_start_x = label_x
+        seg3_start_y = label_y - direction * final_segment_length
+
+        # First segment LONG
+        total_vert_dist = abs(seg3_start_y - start_y)
+        seg1_end_x = point_x
+        seg1_end_y = start_y + direction * (total_vert_dist * 0.8)
+
+        vertices = np.array(
+            [
+                [start_x, start_y],
+                [seg1_end_x, seg1_end_y],
+                [seg3_start_x, seg3_start_y],
+                [end_x, end_y],
+            ]
+        )
+
     codes = [Path.MOVETO, Path.LINETO, Path.LINETO, Path.LINETO]
     return Path(vertices, codes)
 
@@ -938,15 +953,15 @@ def annotate_margin(
 ) -> List[plt.Artist]:
     """
     Annotate points with labels aligned at a margin position.
-    
+
     Labels are placed at a fixed x (for left/right) or y (for top/bottom) position,
     with three-segment connectors:
     1. First segment from dot (horizontal/vertical)
     2. Diagonal segment
     3. Final segment to aligned labels
-    
+
     This is ideal for dense plots where labels would overlap in the middle.
-    
+
     Parameters
     ----------
     ax : matplotlib.axes.Axes
@@ -982,7 +997,7 @@ def annotate_margin(
         Vertical/horizontal spacing between labels. Auto-calculated if None.
     sort_by : str, default='y'
         How to sort labels: 'y', 'x', 'value', or 'none'
-    
+
     Returns
     -------
     list of matplotlib.artist.Artist
@@ -990,118 +1005,157 @@ def annotate_margin(
     """
     x = np.asarray(x)
     y = np.asarray(y)
-    
+
     if indices is None:
         indices = np.arange(len(labels)) if len(labels) <= len(x) else np.arange(len(x))
     indices = np.asarray(indices)
-    
+
     if isinstance(labels, str):
         labels = [labels]
-    
+
     # Get axis limits
     xlim = ax.get_xlim()
     ylim = ax.get_ylim()
     x_range = xlim[1] - xlim[0]
     y_range = ylim[1] - ylim[0]
-    
+
     # Calculate point radius
     point_radius = _point_size_to_radius(point_size, ax)
-    
+
     # Auto-calculate parameters
     if first_segment_length is None:
         first_segment_length = x_range * 0.015
-    
+
     artists = []
-    
+
     # Collect point data
     point_data = []
     for idx, label in zip(indices, labels):
         if idx >= len(x):
             continue
-        point_data.append({
-            "idx": idx,
-            "x": x[idx],
-            "y": y[idx],
-            "label": label,
-        })
-    
+        point_data.append(
+            {
+                "idx": idx,
+                "x": x[idx],
+                "y": y[idx],
+                "label": label,
+            }
+        )
+
     if not point_data:
         return artists
-    
+
     # Split points for 'both' mode
     if side == "both":
         x_mid = (xlim[0] + xlim[1]) / 2
         left_points = [p for p in point_data if p["x"] < x_mid]
         right_points = [p for p in point_data if p["x"] >= x_mid]
-        
+
         # Recursively annotate each side
         if left_points:
             left_labels = [p["label"] for p in left_points]
             left_indices = [p["idx"] for p in left_points]
-            artists.extend(annotate_margin(
-                ax, x, y, left_labels, indices=left_indices, side="left",
-                point_size=point_size, margin_x=margin_x, label_fontsize=label_fontsize,
-                label_fontweight=label_fontweight, label_color=label_color,
-                connection_linewidth=connection_linewidth, connection_color=connection_color,
-                first_segment_length=first_segment_length, label_spacing=label_spacing,
-                sort_by=sort_by,
-            ))
+            artists.extend(
+                annotate_margin(
+                    ax,
+                    x,
+                    y,
+                    left_labels,
+                    indices=left_indices,
+                    side="left",
+                    point_size=point_size,
+                    margin_x=margin_x,
+                    label_fontsize=label_fontsize,
+                    label_fontweight=label_fontweight,
+                    label_color=label_color,
+                    connection_linewidth=connection_linewidth,
+                    connection_color=connection_color,
+                    first_segment_length=first_segment_length,
+                    label_spacing=label_spacing,
+                    sort_by=sort_by,
+                )
+            )
         if right_points:
             right_labels = [p["label"] for p in right_points]
             right_indices = [p["idx"] for p in right_points]
-            artists.extend(annotate_margin(
-                ax, x, y, right_labels, indices=right_indices, side="right",
-                point_size=point_size, margin_x=margin_x, label_fontsize=label_fontsize,
-                label_fontweight=label_fontweight, label_color=label_color,
-                connection_linewidth=connection_linewidth, connection_color=connection_color,
-                first_segment_length=first_segment_length, label_spacing=label_spacing,
-                sort_by=sort_by,
-            ))
+            artists.extend(
+                annotate_margin(
+                    ax,
+                    x,
+                    y,
+                    right_labels,
+                    indices=right_indices,
+                    side="right",
+                    point_size=point_size,
+                    margin_x=margin_x,
+                    label_fontsize=label_fontsize,
+                    label_fontweight=label_fontweight,
+                    label_color=label_color,
+                    connection_linewidth=connection_linewidth,
+                    connection_color=connection_color,
+                    first_segment_length=first_segment_length,
+                    label_spacing=label_spacing,
+                    sort_by=sort_by,
+                )
+            )
         return artists
-    
-    # Sort points
-    if sort_by == "y":
+
+    # CRITICAL: Sort by y position (highest first) to prevent line crossing
+    # The label at rank 1 (top) connects to the dot at rank 1 (highest y)
+    if side in ("right", "left"):
         point_data.sort(key=lambda p: p["y"], reverse=True)
-    elif sort_by == "x":
+    elif side in ("top", "bottom"):
         point_data.sort(key=lambda p: p["x"])
-    elif sort_by == "value":
-        point_data.sort(key=lambda p: p["y"], reverse=True)
-    
+
     n_labels = len(point_data)
-    
+
     # Calculate margin position and label positions
     if side in ("right", "left"):
         # Horizontal margin
         if margin_x is None:
             if side == "right":
-                margin_x = xlim[1] + x_range * 0.02
+                margin_x = xlim[1] - x_range * 0.01  # Slightly inside limit
             else:
-                margin_x = xlim[0] - x_range * 0.02
-        
-        # Calculate label spacing
-        if label_spacing is None:
-            # Distribute labels evenly across y range
-            y_min = min(p["y"] for p in point_data)
-            y_max = max(p["y"] for p in point_data)
-            y_span = max(y_max - y_min, y_range * 0.5)
-            label_spacing = y_span / max(n_labels - 1, 1) if n_labels > 1 else 0
-        
-        # Calculate label y positions (evenly distributed)
-        y_center = sum(p["y"] for p in point_data) / n_labels
-        y_start = y_center + (n_labels - 1) * label_spacing / 2
-        
-        ha = "left" if side == "right" else "right"
-        
+                margin_x = xlim[0] + x_range * 0.01
+
+        # Minimum spacing between labels (to prevent text overlap)
+        min_spacing = label_spacing if label_spacing else y_range * 0.03
+
+        # Calculate label y positions:
+        # - Start at the dot's y position
+        # - Only adjust if would overlap with previous label
+        label_y_positions = []
         for i, p in enumerate(point_data):
-            label_y = y_start - i * label_spacing
+            if i == 0:
+                label_y_positions.append(p["y"])
+            else:
+                prev_label_y = label_y_positions[-1]
+                dot_y = p["y"]
+                # Labels go top to bottom, so new label should be at or below prev - min_spacing
+                max_allowed_y = prev_label_y - min_spacing
+                # Use dot's y if possible, otherwise push down
+                label_y_positions.append(min(dot_y, max_allowed_y))
+
+        ha = "left" if side == "right" else "right"
+
+        # Final segment length (very short horizontal before label)
+        final_seg_len = x_range * 0.02
+
+        for i, p in enumerate(point_data):
+            label_y = label_y_positions[i]
             label_x = margin_x
-            
-            # Create connector
+
+            # Create 3-segment connector: long horiz → diagonal → short horiz
             path = _create_margin_connector(
-                p["x"], p["y"], label_x, label_y,
-                point_radius, side, first_segment_length
+                p["x"],
+                p["y"],
+                label_x,
+                label_y,
+                point_radius,
+                side,
+                final_seg_len,
             )
-            
+
             patch = PathPatch(
                 path,
                 facecolor="none",
@@ -1113,10 +1167,12 @@ def annotate_margin(
             )
             ax.add_patch(patch)
             artists.append(patch)
-            
+
             # Create label
             text_obj = ax.text(
-                label_x, label_y, p["label"],
+                label_x,
+                label_y,
+                p["label"],
                 fontsize=label_fontsize,
                 fontweight=label_fontweight,
                 color=label_color,
@@ -1125,7 +1181,7 @@ def annotate_margin(
                 zorder=10,
             )
             artists.append(text_obj)
-    
+
     else:  # top or bottom
         # Vertical margin
         if margin_y is None:
@@ -1133,33 +1189,38 @@ def annotate_margin(
                 margin_y = ylim[1] + y_range * 0.02
             else:
                 margin_y = ylim[0] - y_range * 0.02
-        
+
         # Calculate label spacing
         if label_spacing is None:
             x_min = min(p["x"] for p in point_data)
             x_max = max(p["x"] for p in point_data)
             x_span = max(x_max - x_min, x_range * 0.5)
             label_spacing = x_span / max(n_labels - 1, 1) if n_labels > 1 else 0
-        
+
         # Sort by x for top/bottom
         point_data.sort(key=lambda p: p["x"])
-        
+
         x_center = sum(p["x"] for p in point_data) / n_labels
         x_start = x_center - (n_labels - 1) * label_spacing / 2
-        
+
         va = "bottom" if side == "top" else "top"
         rotation = 90 if side == "top" else -90
-        
+
         for i, p in enumerate(point_data):
             label_x = x_start + i * label_spacing
             label_y = margin_y
-            
+
             # Create connector
             path = _create_margin_connector(
-                p["x"], p["y"], label_x, label_y,
-                point_radius, side, first_segment_length
+                p["x"],
+                p["y"],
+                label_x,
+                label_y,
+                point_radius,
+                side,
+                first_segment_length,
             )
-            
+
             patch = PathPatch(
                 path,
                 facecolor="none",
@@ -1171,10 +1232,12 @@ def annotate_margin(
             )
             ax.add_patch(patch)
             artists.append(patch)
-            
+
             # Create rotated label
             text_obj = ax.text(
-                label_x, label_y, p["label"],
+                label_x,
+                label_y,
+                p["label"],
                 fontsize=label_fontsize,
                 fontweight=label_fontweight,
                 color=label_color,
@@ -1185,6 +1248,140 @@ def annotate_margin(
                 zorder=10,
             )
             artists.append(text_obj)
+
+    return artists
+
+
+def annotate_heatmap_rows(
+    ax: plt.Axes,
+    rows_to_annotate: List[int],
+    row_labels: List[str],
+    n_cols: int,
+    side: Literal["right", "left"] = "right",
+    label_fontsize: int = 9,
+    label_color: str = "black",
+    line_color: str = "gray",
+    linewidth: float = 0.6,
+    label_offset: float = 0.5,
+    segment_length: float = 0.3,
+    min_spacing: float = 1.5,
+) -> List[plt.Artist]:
+    """
+    Annotate specific rows in a heatmap with margin-aligned labels.
+
+    Creates three-segment connectors (horizontal + diagonal + horizontal) from
+    heatmap rows to labels aligned at a margin. Labels are ordered by row position
+    to prevent connector lines from crossing.
+
+    Parameters
+    ----------
+    ax : matplotlib.axes.Axes
+        The axes containing the heatmap
+    rows_to_annotate : list of int
+        Row indices to annotate
+    row_labels : list of str
+        Labels for each row
+    n_cols : int
+        Number of columns in heatmap
+    side : str, default='right'
+        'right' or 'left'
+    label_fontsize : int, default=9
+        Font size for labels
+    label_color : str, default='black'
+        Color for labels
+    line_color : str, default='gray'
+        Color for connector lines
+    linewidth : float, default=0.6
+        Width of connector lines
+    label_offset : float, default=0.5
+        Distance from plot edge to labels
+    segment_length : float, default=0.3
+        Length of horizontal segments
+    min_spacing : float, default=1.5
+        Minimum spacing between labels
+
+    Returns
+    -------
+    list of matplotlib.artist.Artist
+        Created artists (patches and text)
+
+    Example
+    -------
+    >>> import matplotlib.pyplot as plt
+    >>> import numpy as np
+    >>> from pyforce import annotate_heatmap_rows
+    >>> data = np.random.randn(100, 6)
+    >>> fig, ax = plt.subplots()
+    >>> ax.imshow(data, aspect='auto')
+    >>> ax.set_xlim(-0.5, 10)  # Extend for labels
+    >>> annotate_heatmap_rows(ax, [10, 25, 50], ['Gene_A', 'Gene_B', 'Gene_C'], n_cols=6)
+    """
+    xlim = ax.get_xlim()
+    artists = []
+
+    # Sort by row position (top to bottom) to prevent crossing
+    sorted_data = sorted(zip(rows_to_annotate, row_labels), key=lambda x: x[0])
+    rows_sorted = [x[0] for x in sorted_data]
+    labels_sorted = [x[1] for x in sorted_data]
+
+    # Calculate label positions (maintain order, ensure minimum spacing)
+    label_y_positions = []
+    for i, row in enumerate(rows_sorted):
+        if i == 0:
+            label_y_positions.append(row)
+        else:
+            prev_y = label_y_positions[-1]
+            label_y_positions.append(max(row, prev_y + min_spacing))
+
+    if side == "right":
+        start_x = n_cols - 0.5
+        label_x = xlim[1] - label_offset
+        ha = "left"
+        direction = 1
+    else:
+        start_x = -0.5
+        label_x = xlim[0] + label_offset
+        ha = "right"
+        direction = -1
+
+    for row, label, label_y in zip(rows_sorted, labels_sorted, label_y_positions):
+        # Three-segment connector: horizontal, diagonal, horizontal
+        seg1_end_x = start_x + direction * segment_length
+        seg3_start_x = label_x - direction * segment_length
+
+        vertices = np.array(
+            [
+                [start_x, row],
+                [seg1_end_x, row],
+                [seg3_start_x, label_y],
+                [label_x, label_y],
+            ]
+        )
+        codes = [Path.MOVETO, Path.LINETO, Path.LINETO, Path.LINETO]
+
+        path = Path(vertices, codes)
+        patch = PathPatch(
+            path,
+            facecolor="none",
+            edgecolor=line_color,
+            linewidth=linewidth,
+            capstyle="round",
+            joinstyle="round",
+        )
+        ax.add_patch(patch)
+        artists.append(patch)
+
+        # Add label
+        text_obj = ax.text(
+            label_x + direction * 0.1,
+            label_y,
+            label,
+            fontsize=label_fontsize,
+            color=label_color,
+            ha=ha,
+            va="center",
+        )
+        artists.append(text_obj)
 
     return artists
 
