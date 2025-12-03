@@ -1,9 +1,10 @@
 """
 Heatmap Row Annotation Example
 
-Demonstrates compact 3-segment connectors for annotating specific rows.
-All segments are SHORT and labels stay close to the heatmap.
-Uses aligned elbow positions to prevent line overlap.
+Same style as margin annotation:
+- All first horizontal segments end at same X (aligned)
+- All third horizontal segments start at same X (aligned)
+- Short segments, labels close to heatmap
 """
 
 import matplotlib.pyplot as plt
@@ -22,54 +23,52 @@ def annotate_heatmap_rows(
     label_color="black",
     line_color="gray",
     linewidth=0.6,
-    min_label_spacing=1.0,
+    min_label_spacing=1.2,
 ):
     """
-    Annotate specific rows in a heatmap with aligned 3-segment connectors.
+    Annotate heatmap rows with aligned 3-segment connectors.
 
-    All connectors have:
-    1. Short horizontal from heatmap edge to elbow_x (aligned)
-    2. Short diagonal from elbow to label_align_x
-    3. Short horizontal from label_align_x to label (aligned)
-
-    Aligned positions prevent line overlap.
+    Same pattern as margin annotation:
+    1. First horizontal: from heatmap edge to elbow_x (all aligned)
+    2. Diagonal: from elbow to label_align_x
+    3. Third horizontal: from label_align_x to label (all aligned)
     """
     xlim = ax.get_xlim()
     artists = []
 
-    # Sort by row position (top to bottom) - prevents crossing
+    # Sort by row position - prevents crossing
     sorted_data = sorted(zip(rows_to_annotate, row_labels), key=lambda x: x[0])
     rows_sorted = [x[0] for x in sorted_data]
     labels_sorted = [x[1] for x in sorted_data]
     n_labels = len(rows_sorted)
 
-    # Calculate label positions - center vertically, maintain order
+    # Center labels vertically, ensure no overlap
     total_height = (n_labels - 1) * min_label_spacing
     y_center = sum(rows_sorted) / n_labels
     y_start = y_center - total_height / 2
     label_y_positions = [y_start + i * min_label_spacing for i in range(n_labels)]
 
     if side == "right":
-        start_x = n_cols - 0.5
-        label_x = xlim[1] - 0.05
-        # Aligned positions - SHORT segments
-        elbow_x = n_cols - 0.5 + 0.2  # All first segments end here
-        label_align_x = label_x - 0.15  # All third segments start here
+        start_x = n_cols - 0.5  # Heatmap edge
+        label_x = xlim[1] - 0.05  # Label position
+        # Aligned positions - just past heatmap edge
+        elbow_x = n_cols - 0.5 + 0.15  # First segments end here
+        label_align_x = label_x - 0.12  # Third segments start here
         ha = "left"
     else:
         start_x = -0.5
         label_x = xlim[0] + 0.05
-        elbow_x = -0.5 - 0.2
-        label_align_x = label_x + 0.15
+        elbow_x = -0.5 - 0.15
+        label_align_x = label_x + 0.12
         ha = "right"
 
     for row, label, label_y in zip(rows_sorted, labels_sorted, label_y_positions):
         # 3-segment connector with aligned positions
         vertices = np.array([
-            [start_x, row],          # Start at heatmap edge
-            [elbow_x, row],          # End of first horizontal (aligned)
+            [start_x, row],           # Start at heatmap edge
+            [elbow_x, row],           # End of first horizontal (aligned)
             [label_align_x, label_y], # Start of third horizontal (aligned)
-            [label_x, label_y],      # At label
+            [label_x, label_y],       # At label
         ])
         codes = [Path.MOVETO, Path.LINETO, Path.LINETO, Path.LINETO]
 
@@ -109,8 +108,8 @@ def main():
     rows_to_annotate = [74, 75, 76]
     row_labels = ["Target_A", "Target_B", "Target_C"]
 
-    # Minimal extension - labels close to heatmap
-    ax.set_xlim(-0.5, n_cols + 1.5)
+    # Small extension for labels
+    ax.set_xlim(-0.5, n_cols + 1.2)
 
     annotate_heatmap_rows(
         ax,
@@ -141,7 +140,7 @@ def main():
     ax.spines["right"].set_visible(False)
     ax.spines["top"].set_visible(False)
 
-    fig.colorbar(im, ax=ax, fraction=0.02, pad=0.1)
+    fig.colorbar(im, ax=ax, fraction=0.02, pad=0.08)
 
     plt.savefig("heatmap_example.png", dpi=150, bbox_inches="tight")
     print("Saved heatmap_example.png")

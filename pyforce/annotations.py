@@ -895,12 +895,14 @@ def _create_margin_connector(
         end_x = label_x
         end_y = label_y
 
-        vertices = np.array([
-            [start_x, start_y],
-            [seg1_end_x, seg1_end_y],
-            [seg3_start_x, seg3_start_y],
-            [end_x, end_y],
-        ])
+        vertices = np.array(
+            [
+                [start_x, start_y],
+                [seg1_end_x, seg1_end_y],
+                [seg3_start_x, seg3_start_y],
+                [end_x, end_y],
+            ]
+        )
     else:
         # Vertical orientation (top/bottom)
         direction = 1 if margin_position == "top" else -1
@@ -1110,7 +1112,7 @@ def annotate_margin(
     # Calculate margin position and label positions
     if side in ("right", "left"):
         direction = 1 if side == "right" else -1
-        
+
         # Margin position (where labels are)
         if margin_x is None:
             if side == "right":
@@ -1119,17 +1121,17 @@ def annotate_margin(
                 margin_x = xlim[0] + x_range * 0.01
 
         # Calculate aligned X positions for clean non-overlapping lines:
-        # - elbow_x: where ALL first horizontal segments END
+        # - elbow_x: where ALL first horizontal segments END (just past farthest dot)
         # - label_align_x: where ALL third horizontal segments START
         
-        # Find the rightmost/leftmost dot to determine elbow position
+        # Find the rightmost/leftmost dot - elbow just slightly beyond
         if side == "right":
             max_dot_x = max(p["x"] for p in point_data)
-            elbow_x = max_dot_x + x_range * 0.15  # All first segments end here
-            label_align_x = margin_x - x_range * 0.02  # All third segments start here
+            elbow_x = max_dot_x + x_range * 0.03  # Just past farthest dot
+            label_align_x = margin_x - x_range * 0.02
         else:
             min_dot_x = min(p["x"] for p in point_data)
-            elbow_x = min_dot_x - x_range * 0.15
+            elbow_x = min_dot_x - x_range * 0.03  # Just past farthest dot
             label_align_x = margin_x + x_range * 0.02
 
         # Minimum spacing between labels
@@ -1140,7 +1142,7 @@ def annotate_margin(
         total_label_height = (n_labels - 1) * min_spacing
         y_center = (ylim[0] + ylim[1]) / 2
         y_start = y_center + total_label_height / 2
-        
+
         label_y_positions = [y_start - i * min_spacing for i in range(n_labels)]
 
         ha = "left" if side == "right" else "right"
