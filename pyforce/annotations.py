@@ -1066,16 +1066,16 @@ def _score_label_position(
         (hull_vertices[:, 0] - x) ** 2 + (hull_vertices[:, 1] - y) ** 2
     )
     min_hull_boundary_dist = np.min(hull_boundary_dists)
-    
+
     # Optimal distance from hull boundary is small but outside
     hull_size = np.max(np.max(hull_vertices, axis=0) - np.min(hull_vertices, axis=0))
     optimal_boundary_dist = hull_size * 0.15  # Close to hull
-    
+
     # Strongly penalize being too far from hull boundary
     if min_hull_boundary_dist > optimal_boundary_dist:
         excess_dist = min_hull_boundary_dist - optimal_boundary_dist
         score -= excess_dist * 3.0  # Strong penalty for being far away
-    
+
     # Bonus for being just outside (sweet spot)
     if 0 < min_hull_boundary_dist < optimal_boundary_dist * 2:
         score += 20.0
