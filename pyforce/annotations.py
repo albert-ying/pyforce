@@ -1057,15 +1057,28 @@ def _score_label_position(
         overflow = label_top - ylim[1] + axis_margin
         score -= 100.0 + overflow * 30.0
 
-    # Distance to own hull (prefer closer for cleaner connectors, but not inside)
+    # Distance to own hull (strongly prefer closer for cleaner layout)
     hull_centroid = np.mean(hull_vertices, axis=0)
     hull_dist = np.sqrt((x - hull_centroid[0]) ** 2 + (y - hull_centroid[1]) ** 2)
 
-    # Optimal distance is roughly the hull size
+    # Find minimum distance to hull boundary
+    hull_boundary_dists = np.sqrt(
+        (hull_vertices[:, 0] - x) ** 2 + (hull_vertices[:, 1] - y) ** 2
+    )
+    min_hull_boundary_dist = np.min(hull_boundary_dists)
+    
+    # Optimal distance from hull boundary is small but outside
     hull_size = np.max(np.max(hull_vertices, axis=0) - np.min(hull_vertices, axis=0))
-    optimal_dist = hull_size * 0.8
-    dist_penalty = abs(hull_dist - optimal_dist) * 0.5
-    score -= dist_penalty
+    optimal_boundary_dist = hull_size * 0.15  # Close to hull
+    
+    # Strongly penalize being too far from hull boundary
+    if min_hull_boundary_dist > optimal_boundary_dist:
+        excess_dist = min_hull_boundary_dist - optimal_boundary_dist
+        score -= excess_dist * 3.0  # Strong penalty for being far away
+    
+    # Bonus for being just outside (sweet spot)
+    if 0 < min_hull_boundary_dist < optimal_boundary_dist * 2:
+        score += 20.0
 
     return score
 
@@ -1111,8 +1124,9 @@ def _find_best_label_position(
     hull_size = max_xy - min_xy
     max_hull_dim = max(hull_size)
 
-    buffer_min = max_hull_dim * label_buffer_factor
-    buffer_max = max_hull_dim * (label_buffer_factor + 0.4)
+    # Keep labels close to hulls - reduced buffer distances
+    buffer_min = max_hull_dim * label_buffer_factor * 0.5
+    buffer_max = max_hull_dim * label_buffer_factor * 1.2
 
     # Generate candidate positions
     candidates = _generate_hull_exterior_candidates(
@@ -1120,13 +1134,13 @@ def _find_best_label_position(
         buffer_min=buffer_min,
         buffer_max=buffer_max,
         n_radial=16,  # More angular resolution
-        n_buffer=4,  # More buffer options
+        n_buffer=3,  # Fewer buffer options, closer range
     )
 
-    # Also add cardinal direction candidates (fallback positions)
+    # Also add cardinal direction candidates (closer to hull)
     centroid = np.mean(hull_vertices, axis=0)
     center = (min_xy + max_xy) / 2
-    for buffer_mult in [1.0, 1.5, 2.0]:
+    for buffer_mult in [0.6, 0.9, 1.2]:
         buffer = max_hull_dim * label_buffer_factor * buffer_mult
         candidates.extend(
             [
@@ -1160,9 +1174,9 @@ def _find_best_label_position(
             best_score = score
             best_pos = pos
 
-    # If no valid position found, fall back to furthest cardinal direction
+    # If no valid position found, fall back to cardinal directions (still close)
     if best_pos is None or best_score == float("-inf"):
-        buffer = max_hull_dim * label_buffer_factor * 2.5
+        buffer = max_hull_dim * label_buffer_factor * 1.5
         fallback_candidates = [
             (center[0], max_xy[1] + buffer),
             (center[0], min_xy[1] - buffer),
