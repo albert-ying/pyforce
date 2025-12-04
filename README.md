@@ -6,10 +6,14 @@ PyForce brings the elegant annotation capabilities of R's [ggforce](https://gith
 
 ## Features
 
-- **Smart Point Annotations** (`annotate_points`) - Elbow connectors with adjustText for collision avoidance
+- **Smart Point Annotations** (`annotate_points`) - Elbow connectors with intelligent collision avoidance
+  - Automatic label positioning that avoids points, other labels, and axes
+  - Multiple candidate positions scored to find optimal placement
 - **Margin Annotations** (`annotate_margin`) - 3-segment connectors with labels at plot edges
 - **Edge Annotations** (`annotate_edge`) - Universal function for heatmaps, line plots, any plot
 - **Convex Hull Groupings** (`geom_mark_hull`) - Smooth boundaries around point groups
+  - Labels guaranteed to be outside all polygons
+  - Smart positioning avoids points, other labels, and plot boundaries
 
 ## Installation
 
@@ -109,7 +113,7 @@ geom_mark_hull(
 
 ### `annotate_points()`
 
-Smart elbow annotations with adjustText collision avoidance.
+Smart elbow annotations with intelligent collision avoidance. Labels are automatically positioned to avoid overlapping with points, other labels, and axes.
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
@@ -117,8 +121,10 @@ Smart elbow annotations with adjustText collision avoidance.
 | `x`, `y` | array-like | required | Point coordinates |
 | `labels` | list[str] | required | Labels for points |
 | `indices` | array-like | None | Indices to annotate |
-| `connector_type` | str | 'elbow' | 'elbow', 'straight', 'horizontal' |
-| `force_points` | float | 1.0 | Repulsion from points |
+| `connector_type` | str | 'horizontal' | 'elbow', 'straight', 'horizontal' |
+| `offset_factor` | float | 3.5 | Label offset multiplier |
+| `force_points` | float | 1.5 | Repulsion from points |
+| `force_text` | float | 0.8 | Repulsion between labels |
 
 ### `annotate_margin()`
 
@@ -146,7 +152,7 @@ Universal edge annotation for any plot type.
 
 ### `geom_mark_hull()`
 
-Convex hull annotations for grouped data.
+Convex hull annotations for grouped data. Labels are intelligently positioned outside all polygons, avoiding points and plot boundaries.
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
@@ -155,6 +161,7 @@ Convex hull annotations for grouped data.
 | `groups` | array-like | None | Group membership |
 | `labels` | list[str] | None | Group labels |
 | `hull_alpha` | float | 0.2 | Fill transparency |
+| `label_buffer_factor` | float | 0.25 | Distance from hull to label |
 
 ## Requirements
 

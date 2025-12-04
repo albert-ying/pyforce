@@ -288,6 +288,135 @@ def _draw_connector(
     return patch
 
 
+def _generate_label_candidates(
+    px: float,
+    py: float,
+    base_offset: float,
+    ax: plt.Axes,
+) -> List[Tuple[float, float, str]]:
+    """
+    Generate candidate label positions around a point.
+
+    Returns list of (x, y, ha) tuples for 8 directions plus variations.
+    """
+    xlim = ax.get_xlim()
+    ylim = ax.get_ylim()
+
+    candidates = []
+
+    # 8 cardinal and diagonal directions
+    directions = [
+        (1, 0, "left"),  # Right
+        (-1, 0, "right"),  # Left
+        (0, 1, "center"),  # Top
+        (0, -1, "center"),  # Bottom
+        (1, 1, "left"),  # Top-right
+        (-1, 1, "right"),  # Top-left
+        (1, -1, "left"),  # Bottom-right
+        (-1, -1, "right"),  # Bottom-left
+    ]
+
+    # Multiple offset distances
+    for offset_mult in [1.0, 1.5, 2.0]:
+        offset = base_offset * offset_mult
+        for dx, dy, ha in directions:
+            # Normalize diagonal offsets
+            if dx != 0 and dy != 0:
+                factor = 0.707  # 1/sqrt(2)
+            else:
+                factor = 1.0
+
+            lx = px + dx * offset * factor
+            ly = py + dy * offset * factor * 0.5  # Less vertical offset
+
+            candidates.append((lx, ly, ha))
+
+    return candidates
+
+
+def _score_label_candidate(
+    candidate: Tuple[float, float, str],
+    px: float,
+    py: float,
+    all_points: np.ndarray,
+    existing_labels: List[Tuple[float, float, float, float]],
+    text_width: float,
+    text_height: float,
+    ax: plt.Axes,
+    point_radius: float,
+) -> float:
+    """
+    Score a candidate label position for annotate_points.
+    Higher score is better.
+    """
+    lx, ly, ha = candidate
+    score = 0.0
+
+    xlim = ax.get_xlim()
+    ylim = ax.get_ylim()
+    x_range = xlim[1] - xlim[0]
+    y_range = ylim[1] - ylim[0]
+
+    # Calculate label bounding box edges based on alignment
+    if ha == "left":
+        label_left = lx
+        label_right = lx + text_width
+    elif ha == "right":
+        label_left = lx - text_width
+        label_right = lx
+    else:  # center
+        label_left = lx - text_width / 2
+        label_right = lx + text_width / 2
+
+    label_bottom = ly - text_height / 2
+    label_top = ly + text_height / 2
+
+    # Strong penalty for overlapping with axes (labels should stay inside plot)
+    axis_margin = min(x_range, y_range) * 0.02  # Small margin from axes
+
+    if label_left < xlim[0] + axis_margin:
+        score -= 150.0 + (xlim[0] + axis_margin - label_left) * 50
+    if label_right > xlim[1] - axis_margin:
+        score -= 150.0 + (label_right - xlim[1] + axis_margin) * 50
+    if label_bottom < ylim[0] + axis_margin:
+        score -= 150.0 + (ylim[0] + axis_margin - label_bottom) * 50
+    if label_top > ylim[1] - axis_margin:
+        score -= 150.0 + (label_top - ylim[1] + axis_margin) * 50
+
+    # Distance from all points (want to be far from points)
+    point_distances = np.sqrt(
+        (all_points[:, 0] - lx) ** 2 + (all_points[:, 1] - ly) ** 2
+    )
+    min_point_dist = np.min(point_distances)
+
+    # Penalize if label would overlap with any point
+    if min_point_dist < point_radius * 1.5:
+        score -= 100.0
+    else:
+        score += min_point_dist * 3.0
+
+    # Check overlap with existing labels
+    for ex_lx, ex_ly, ex_w, ex_h in existing_labels:
+        x_overlap = abs(lx - ex_lx) < (text_width + ex_w) / 2 * 1.1
+        y_overlap = abs(ly - ex_ly) < (text_height + ex_h) / 2 * 1.1
+        if x_overlap and y_overlap:
+            score -= 200.0  # Heavy penalty for label overlap
+        else:
+            # Bonus for distance from other labels
+            label_dist = np.sqrt((lx - ex_lx) ** 2 + (ly - ex_ly) ** 2)
+            score += label_dist * 1.0
+
+    # Prefer horizontal placement (cleaner connectors)
+    dy_from_point = abs(ly - py)
+    score -= dy_from_point * 2.0  # Penalty for vertical displacement
+
+    # Prefer closer to own point (shorter connectors)
+    dist_to_own_point = np.sqrt((lx - px) ** 2 + (ly - py) ** 2)
+    score -= dist_to_own_point * 0.5
+
+    return score
+
+
 def _compute_smart_label_positions(
     ax: plt.Axes,
     x: np.ndarray,
@@ -300,19 +429,22 @@ def _compute_smart_label_positions(
     offset_factor: float = 2.5,
 ) -> List[Tuple[float, float, str]]:
     """
-    Compute smart initial positions for labels.
+    Compute smart initial positions for labels using candidate scoring.
 
     Returns list of (x, y, ha) tuples where ha is horizontal alignment.
-    Prefers placing labels to the right, but switches to left near edges
-    or when it would reduce overlap.
+    Uses a scoring system to find optimal positions that avoid overlaps.
     """
     xlim = ax.get_xlim()
+    ylim = ax.get_ylim()
     x_range = xlim[1] - xlim[0]
+    y_range = ylim[1] - ylim[0]
 
-    # Base offset for labels
+    # Base offset for labels - increased for better separation
     base_offset = point_radius * offset_factor
 
+    all_points = np.column_stack([x, y])
     positions = []
+    existing_labels = []  # Track placed labels as (x, y, width, height)
 
     for idx, label in zip(indices, labels):
         if idx >= len(x):
@@ -320,44 +452,85 @@ def _compute_smart_label_positions(
 
         px, py = x[idx], y[idx]
 
-        # Determine direction based on position in plot
-        # Default to right, but use left if point is in right 30% of plot
-        # or if there are many points to the right
+        # Estimate text dimensions
+        text_width, text_height = _estimate_text_size(label, label_fontsize, ax)
 
+        # Generate candidate positions
+        candidates = _generate_label_candidates(px, py, base_offset, ax)
+
+        # Add preferred direction candidates with higher priority
         right_edge_threshold = xlim[1] - 0.3 * x_range
         left_edge_threshold = xlim[0] + 0.3 * x_range
 
-        # Count nearby points on each side
-        nearby_mask = np.abs(y - py) < (point_radius * 5)
-        points_to_right = np.sum(
-            (x[nearby_mask] > px) & (x[nearby_mask] < px + base_offset * 3)
-        )
-        points_to_left = np.sum(
-            (x[nearby_mask] < px) & (x[nearby_mask] > px - base_offset * 3)
-        )
-
-        # Decision logic for direction
         if px > right_edge_threshold:
-            direction = "left"
+            preferred = "left"
         elif px < left_edge_threshold:
-            direction = "right"
-        elif points_to_right > points_to_left + 2:
-            direction = "left"
+            preferred = "right"
         else:
-            direction = prefer_direction
+            preferred = prefer_direction
 
-        if direction == "right":
-            label_x = px + base_offset
-            ha = "left"
-        else:
-            label_x = px - base_offset
-            ha = "right"
+        # Score all candidates
+        best_candidate = None
+        best_score = float("-inf")
 
-        label_y = py  # Keep at same Y level for horizontal connectors
+        for candidate in candidates:
+            score = _score_label_candidate(
+                candidate,
+                px,
+                py,
+                all_points,
+                existing_labels,
+                text_width,
+                text_height,
+                ax,
+                point_radius,
+            )
 
-        positions.append((label_x, label_y, ha))
+            # Bonus for matching preferred direction
+            lx, ly, ha = candidate
+            if (preferred == "right" and lx > px) or (preferred == "left" and lx < px):
+                score += 10.0
+
+            if score > best_score:
+                best_score = score
+                best_candidate = candidate
+
+        if best_candidate is None:
+            # Fallback to simple positioning
+            if preferred == "right":
+                best_candidate = (px + base_offset, py, "left")
+            else:
+                best_candidate = (px - base_offset, py, "right")
+
+        lx, ly, ha = best_candidate
+        positions.append((lx, ly, ha))
+
+        # Track this label for future collision detection
+        existing_labels.append((lx, ly, text_width, text_height))
 
     return positions
+
+
+def _estimate_text_size(
+    text: str,
+    fontsize: int,
+    ax: plt.Axes,
+) -> Tuple[float, float]:
+    """Estimate text size in data coordinates."""
+    x_scale, y_scale = _get_data_scale(ax)
+
+    # Estimate based on character count and font size
+    char_width_pts = fontsize * 0.55
+    char_height_pts = fontsize * 1.2
+
+    lines = text.split("\n")
+    max_chars = max(len(line) for line in lines)
+    n_lines = len(lines)
+
+    text_width = max_chars * char_width_pts * x_scale
+    text_height = n_lines * char_height_pts * y_scale
+
+    return text_width, text_height
 
 
 def annotate_points(
@@ -377,13 +550,13 @@ def annotate_points(
     elbow_angle: float = 45.0,
     connector_gap: float = 0.02,
     prefer_direction: str = "right",
-    offset_factor: float = 2.5,
-    force_points: float = 1.0,
-    force_text: float = 0.5,
-    expand_points: float = 2.0,
-    expand_text: float = 1.2,
+    offset_factor: float = 3.5,
+    force_points: float = 1.5,
+    force_text: float = 0.8,
+    expand_points: float = 2.5,
+    expand_text: float = 1.5,
     use_adjust_text: bool = True,
-    only_move_text: str = "x",
+    only_move_text: str = "xy",
 ) -> List[plt.Artist]:
     """
     Annotate points with smart connectors and collision-free labels.
@@ -425,19 +598,19 @@ def annotate_points(
         Gap between connector end and text
     prefer_direction : str, default='right'
         Preferred direction for label placement ('right' or 'left')
-    offset_factor : float, default=2.5
+    offset_factor : float, default=3.5
         Multiplier for label offset from point
-    force_points : float, default=1.0
+    force_points : float, default=1.5
         Repulsion force from points
-    force_text : float, default=0.5
+    force_text : float, default=0.8
         Repulsion force between labels
-    expand_points : float, default=2.0
+    expand_points : float, default=2.5
         Expansion factor for point collision boxes
-    expand_text : float, default=1.2
+    expand_text : float, default=1.5
         Expansion factor for text collision boxes
     use_adjust_text : bool, default=True
         Whether to use adjustText for positioning
-    only_move_text : str, default='x'
+    only_move_text : str, default='xy'
         Direction to move text: 'x', 'y', or 'xy'
 
     Returns
@@ -599,6 +772,420 @@ def _find_hull_edge_point(
     return hull_vertices[nearest_idx, 0], hull_vertices[nearest_idx, 1]
 
 
+def _point_in_polygon(point: Tuple[float, float], polygon: np.ndarray) -> bool:
+    """
+    Check if a point is inside a polygon using ray casting algorithm.
+
+    Parameters
+    ----------
+    point : tuple
+        (x, y) coordinates of the point
+    polygon : np.ndarray
+        Array of (x, y) vertices defining the polygon
+
+    Returns
+    -------
+    bool
+        True if point is inside the polygon
+    """
+    x, y = point
+    n = len(polygon)
+    inside = False
+
+    j = n - 1
+    for i in range(n):
+        xi, yi = polygon[i]
+        xj, yj = polygon[j]
+
+        if ((yi > y) != (yj > y)) and (x < (xj - xi) * (y - yi) / (yj - yi) + xi):
+            inside = not inside
+        j = i
+
+    return inside
+
+
+def _rect_in_polygon(
+    rect_center: Tuple[float, float],
+    rect_width: float,
+    rect_height: float,
+    polygon: np.ndarray,
+) -> bool:
+    """
+    Check if any corner of a rectangle is inside a polygon.
+
+    Parameters
+    ----------
+    rect_center : tuple
+        (x, y) center of the rectangle
+    rect_width : float
+        Width of the rectangle
+    rect_height : float
+        Height of the rectangle
+    polygon : np.ndarray
+        Array of polygon vertices
+
+    Returns
+    -------
+    bool
+        True if any part of the rectangle is inside the polygon
+    """
+    cx, cy = rect_center
+    hw, hh = rect_width / 2, rect_height / 2
+
+    # Check all 4 corners plus center
+    corners = [
+        (cx - hw, cy - hh),
+        (cx + hw, cy - hh),
+        (cx - hw, cy + hh),
+        (cx + hw, cy + hh),
+        (cx, cy),
+    ]
+
+    return any(_point_in_polygon(corner, polygon) for corner in corners)
+
+
+def _get_text_bbox_data(
+    ax: plt.Axes,
+    text: str,
+    x: float,
+    y: float,
+    fontsize: int,
+    ha: str = "center",
+    va: str = "center",
+) -> Tuple[float, float, float, float]:
+    """
+    Estimate text bounding box in data coordinates.
+
+    Returns
+    -------
+    tuple
+        (x_min, y_min, width, height) in data coordinates
+    """
+    fig = ax.get_figure()
+    renderer = (
+        fig.canvas.get_renderer() if hasattr(fig.canvas, "get_renderer") else None
+    )
+
+    # Estimate text size using character counts and font metrics
+    # Average character width is approximately 0.6 * fontsize in points
+    char_width_pts = fontsize * 0.55
+    char_height_pts = fontsize * 1.2
+
+    # Handle multiline text
+    lines = text.split("\n")
+    max_chars = max(len(line) for line in lines)
+    n_lines = len(lines)
+
+    text_width_pts = max_chars * char_width_pts
+    text_height_pts = n_lines * char_height_pts
+
+    # Convert points to data coordinates
+    x_scale, y_scale = _get_data_scale(ax)
+    text_width_data = text_width_pts * x_scale
+    text_height_data = text_height_pts * y_scale
+
+    # Adjust position based on alignment
+    if ha == "center":
+        x_min = x - text_width_data / 2
+    elif ha == "left":
+        x_min = x
+    else:  # right
+        x_min = x - text_width_data
+
+    if va == "center":
+        y_min = y - text_height_data / 2
+    elif va == "bottom":
+        y_min = y
+    else:  # top
+        y_min = y - text_height_data
+
+    return x_min, y_min, text_width_data, text_height_data
+
+
+def _generate_hull_exterior_candidates(
+    hull_vertices: np.ndarray,
+    buffer_min: float,
+    buffer_max: float,
+    n_radial: int = 12,
+    n_buffer: int = 3,
+) -> List[Tuple[float, float]]:
+    """
+    Generate candidate label positions around the exterior of a hull.
+
+    Parameters
+    ----------
+    hull_vertices : np.ndarray
+        Vertices of the hull polygon
+    buffer_min : float
+        Minimum distance from hull boundary
+    buffer_max : float
+        Maximum distance from hull boundary
+    n_radial : int
+        Number of angular positions to consider
+    n_buffer : int
+        Number of buffer distances to consider
+
+    Returns
+    -------
+    list of tuple
+        List of (x, y) candidate positions
+    """
+    centroid = np.mean(hull_vertices, axis=0)
+    candidates = []
+
+    # Generate positions at various angles and distances
+    for angle_idx in range(n_radial):
+        angle = 2 * np.pi * angle_idx / n_radial
+        direction = np.array([np.cos(angle), np.sin(angle)])
+
+        # Find the hull boundary point in this direction
+        # by finding the farthest vertex in this direction
+        projections = np.dot(hull_vertices - centroid, direction)
+        max_idx = np.argmax(projections)
+        boundary_point = hull_vertices[max_idx]
+
+        # Generate candidates at different buffer distances
+        for buffer_idx in range(n_buffer):
+            buffer = buffer_min + (buffer_max - buffer_min) * buffer_idx / max(
+                n_buffer - 1, 1
+            )
+            candidate = boundary_point + direction * buffer
+            candidates.append((candidate[0], candidate[1]))
+
+    return candidates
+
+
+def _score_label_position(
+    pos: Tuple[float, float],
+    text_width: float,
+    text_height: float,
+    all_polygons: List[np.ndarray],
+    all_points: np.ndarray,
+    existing_labels: List[Tuple[float, float, float, float]],
+    hull_vertices: np.ndarray,
+    ax: plt.Axes,
+) -> float:
+    """
+    Score a candidate label position (higher is better).
+
+    Considers:
+    - Hard constraint: Must be outside all polygons
+    - Distance from data points
+    - Distance from other labels
+    - Distance from plot edges (prefer positions within plot bounds)
+
+    Parameters
+    ----------
+    pos : tuple
+        (x, y) candidate position
+    text_width, text_height : float
+        Estimated text dimensions
+    all_polygons : list
+        List of all hull polygons to avoid
+    all_points : np.ndarray
+        All data points in the plot
+    existing_labels : list
+        List of (x, y, width, height) for existing label bboxes
+    hull_vertices : np.ndarray
+        Vertices of the hull this label belongs to
+    ax : matplotlib.axes.Axes
+        The axes object
+
+    Returns
+    -------
+    float
+        Score (negative infinity if inside polygon)
+    """
+    x, y = pos
+
+    # Hard constraint: label bbox must not be inside any polygon
+    for polygon in all_polygons:
+        if _rect_in_polygon(pos, text_width * 1.2, text_height * 1.2, polygon):
+            return float("-inf")
+
+    # Check if point itself is inside any polygon
+    for polygon in all_polygons:
+        if _point_in_polygon(pos, polygon):
+            return float("-inf")
+
+    score = 0.0
+
+    # Distance from data points (want to be far from points)
+    if len(all_points) > 0:
+        point_distances = np.sqrt(
+            (all_points[:, 0] - x) ** 2 + (all_points[:, 1] - y) ** 2
+        )
+        min_point_dist = np.min(point_distances)
+        score += min_point_dist * 2.0  # Weight for point avoidance
+
+    # Distance from existing labels (want to be far from other labels)
+    for lx, ly, lw, lh in existing_labels:
+        # Check for overlap
+        x_overlap = abs(x - lx) < (text_width + lw) / 2
+        y_overlap = abs(y - ly) < (text_height + lh) / 2
+        if x_overlap and y_overlap:
+            return float("-inf")  # Hard constraint: no overlap
+
+        label_dist = np.sqrt((x - lx) ** 2 + (y - ly) ** 2)
+        score += label_dist * 1.5  # Weight for label separation
+
+    # Prefer positions within plot bounds - labels should NOT overlap with axes
+    xlim = ax.get_xlim()
+    ylim = ax.get_ylim()
+    x_range = xlim[1] - xlim[0]
+    y_range = ylim[1] - ylim[0]
+
+    # Calculate label bounding box (assuming center alignment)
+    label_left = x - text_width / 2
+    label_right = x + text_width / 2
+    label_bottom = y - text_height / 2
+    label_top = y + text_height / 2
+
+    # Strong penalty for overlapping with axes
+    axis_margin = min(x_range, y_range) * 0.02  # Small margin from axes
+
+    if label_left < xlim[0] + axis_margin:
+        overflow = xlim[0] + axis_margin - label_left
+        score -= 100.0 + overflow * 30.0
+    if label_right > xlim[1] - axis_margin:
+        overflow = label_right - xlim[1] + axis_margin
+        score -= 100.0 + overflow * 30.0
+    if label_bottom < ylim[0] + axis_margin:
+        overflow = ylim[0] + axis_margin - label_bottom
+        score -= 100.0 + overflow * 30.0
+    if label_top > ylim[1] - axis_margin:
+        overflow = label_top - ylim[1] + axis_margin
+        score -= 100.0 + overflow * 30.0
+
+    # Distance to own hull (prefer closer for cleaner connectors, but not inside)
+    hull_centroid = np.mean(hull_vertices, axis=0)
+    hull_dist = np.sqrt((x - hull_centroid[0]) ** 2 + (y - hull_centroid[1]) ** 2)
+
+    # Optimal distance is roughly the hull size
+    hull_size = np.max(np.max(hull_vertices, axis=0) - np.min(hull_vertices, axis=0))
+    optimal_dist = hull_size * 0.8
+    dist_penalty = abs(hull_dist - optimal_dist) * 0.5
+    score -= dist_penalty
+
+    return score
+
+
+def _find_best_label_position(
+    hull_vertices: np.ndarray,
+    all_polygons: List[np.ndarray],
+    all_points: np.ndarray,
+    existing_labels: List[Tuple[float, float, float, float]],
+    text_width: float,
+    text_height: float,
+    ax: plt.Axes,
+    label_buffer_factor: float = 0.25,
+) -> Tuple[float, float]:
+    """
+    Find the best position for a hull label that avoids all obstacles.
+
+    Parameters
+    ----------
+    hull_vertices : np.ndarray
+        Vertices of the hull to label
+    all_polygons : list
+        All hull polygons (including this one)
+    all_points : np.ndarray
+        All data points
+    existing_labels : list
+        Bboxes of already placed labels
+    text_width, text_height : float
+        Estimated text dimensions
+    ax : matplotlib.axes.Axes
+        The axes object
+    label_buffer_factor : float
+        Base buffer factor for label distance
+
+    Returns
+    -------
+    tuple
+        (x, y) best position for the label
+    """
+    # Calculate hull properties
+    min_xy = np.min(hull_vertices, axis=0)
+    max_xy = np.max(hull_vertices, axis=0)
+    hull_size = max_xy - min_xy
+    max_hull_dim = max(hull_size)
+
+    buffer_min = max_hull_dim * label_buffer_factor
+    buffer_max = max_hull_dim * (label_buffer_factor + 0.4)
+
+    # Generate candidate positions
+    candidates = _generate_hull_exterior_candidates(
+        hull_vertices,
+        buffer_min=buffer_min,
+        buffer_max=buffer_max,
+        n_radial=16,  # More angular resolution
+        n_buffer=4,  # More buffer options
+    )
+
+    # Also add cardinal direction candidates (fallback positions)
+    centroid = np.mean(hull_vertices, axis=0)
+    center = (min_xy + max_xy) / 2
+    for buffer_mult in [1.0, 1.5, 2.0]:
+        buffer = max_hull_dim * label_buffer_factor * buffer_mult
+        candidates.extend(
+            [
+                (center[0], max_xy[1] + buffer),  # Top
+                (center[0], min_xy[1] - buffer),  # Bottom
+                (max_xy[0] + buffer, center[1]),  # Right
+                (min_xy[0] - buffer, center[1]),  # Left
+                (max_xy[0] + buffer * 0.7, max_xy[1] + buffer * 0.7),  # Top-right
+                (min_xy[0] - buffer * 0.7, max_xy[1] + buffer * 0.7),  # Top-left
+                (max_xy[0] + buffer * 0.7, min_xy[1] - buffer * 0.7),  # Bottom-right
+                (min_xy[0] - buffer * 0.7, min_xy[1] - buffer * 0.7),  # Bottom-left
+            ]
+        )
+
+    # Score all candidates
+    best_pos = None
+    best_score = float("-inf")
+
+    for pos in candidates:
+        score = _score_label_position(
+            pos,
+            text_width,
+            text_height,
+            all_polygons,
+            all_points,
+            existing_labels,
+            hull_vertices,
+            ax,
+        )
+        if score > best_score:
+            best_score = score
+            best_pos = pos
+
+    # If no valid position found, fall back to furthest cardinal direction
+    if best_pos is None or best_score == float("-inf"):
+        buffer = max_hull_dim * label_buffer_factor * 2.5
+        fallback_candidates = [
+            (center[0], max_xy[1] + buffer),
+            (center[0], min_xy[1] - buffer),
+            (max_xy[0] + buffer, center[1]),
+            (min_xy[0] - buffer, center[1]),
+        ]
+        # Choose the one furthest from points
+        best_pos = max(
+            fallback_candidates,
+            key=lambda c: (
+                np.min(
+                    np.sqrt(
+                        (all_points[:, 0] - c[0]) ** 2 + (all_points[:, 1] - c[1]) ** 2
+                    )
+                )
+                if len(all_points) > 0
+                else 0
+            ),
+        )
+
+    return best_pos
+
+
 def geom_mark_hull(
     ax: plt.Axes,
     x: np.ndarray,
@@ -719,7 +1306,10 @@ def geom_mark_hull(
     artists = []
     text_objects = []
     hull_data = []
+    all_polygons = []  # Collect all hull polygons for collision detection
 
+    # First pass: create all hulls and collect polygons
+    hull_info = []
     for i, group in enumerate(unique_groups):
         mask = groups == group
         group_points = points[mask]
@@ -748,30 +1338,43 @@ def geom_mark_hull(
         ax.add_patch(hull_patch)
         artists.append(hull_patch)
 
-        # Label position
-        min_xy = np.min(smooth_vertices, axis=0)
-        max_xy = np.max(smooth_vertices, axis=0)
-        center = (min_xy + max_xy) / 2
-        size = max_xy - min_xy
-        buffer = label_buffer_factor * max(size)
-
-        candidates = [
-            (center[0], max_xy[1] + buffer),
-            (center[0], min_xy[1] - buffer),
-            (max_xy[0] + buffer, center[1]),
-            (min_xy[0] - buffer, center[1]),
-        ]
-
-        best_pos = max(
-            candidates,
-            key=lambda c: np.min(
-                np.sqrt((points[:, 0] - c[0]) ** 2 + (points[:, 1] - c[1]) ** 2)
-            ),
+        # Store hull info for later label placement
+        hull_info.append(
+            {
+                "vertices": smooth_vertices,
+                "color": hull_colors[color_idx],
+                "group_idx": i,
+            }
         )
+        all_polygons.append(smooth_vertices)
+
+    # Second pass: place labels intelligently, avoiding all obstacles
+    existing_labels = []  # Track placed labels as (x, y, width, height)
+
+    for info in hull_info:
+        smooth_vertices = info["vertices"]
+        i = info["group_idx"]
 
         label_text = labels[i % len(labels)]
         if descriptions[i % len(descriptions)]:
             label_text = f"{label_text}\n{descriptions[i % len(descriptions)]}"
+
+        # Estimate text dimensions
+        _, _, text_width, text_height = _get_text_bbox_data(
+            ax, label_text, 0, 0, label_fontsize, ha="center", va="center"
+        )
+
+        # Find optimal position avoiding polygons, points, and other labels
+        best_pos = _find_best_label_position(
+            hull_vertices=smooth_vertices,
+            all_polygons=all_polygons,
+            all_points=points,
+            existing_labels=existing_labels,
+            text_width=text_width,
+            text_height=text_height,
+            ax=ax,
+            label_buffer_factor=label_buffer_factor,
+        )
 
         text_obj = ax.text(
             best_pos[0],
@@ -786,27 +1389,46 @@ def geom_mark_hull(
         )
         text_objects.append(text_obj)
 
+        # Track this label's bbox for future collision detection
+        existing_labels.append((best_pos[0], best_pos[1], text_width, text_height))
+
         hull_data.append(
             {
                 "vertices": smooth_vertices,
                 "text_obj": text_obj,
-                "color": hull_colors[color_idx],
+                "color": info["color"],
             }
         )
 
-    if use_adjust_text and HAS_ADJUST_TEXT and text_objects:
+    # Optional: use adjustText for fine-tuning, but with polygon awareness
+    # Note: adjustText doesn't know about polygons, so we skip it by default
+    # when smart positioning is used. Enable only for minor adjustments.
+    if use_adjust_text and HAS_ADJUST_TEXT and text_objects and len(text_objects) > 3:
+        # Only use adjustText for many labels where minor adjustments help
+        # Use very gentle forces to avoid moving labels into polygons
         adjust_text(
             text_objects,
             x=points[:, 0],
             y=points[:, 1],
             arrowprops=None,
-            expand_points=(1.5, 1.5),
-            expand_text=(1.8, 1.8),
-            force_points=(force_points, force_points),
-            force_text=(force_text, force_text),
-            lim=1500,
+            expand_points=(1.2, 1.2),
+            expand_text=(1.3, 1.3),
+            force_points=(force_points * 0.3, force_points * 0.3),
+            force_text=(force_text * 0.3, force_text * 0.3),
+            lim=500,  # Fewer iterations to prevent large movements
             only_move={"points": "xy", "text": "xy"},
         )
+
+        # After adjustText, verify labels aren't inside polygons
+        # If they are, reset to original positions
+        for text_obj, orig_bbox in zip(text_objects, existing_labels):
+            new_x, new_y = text_obj.get_position()
+            is_inside = any(
+                _point_in_polygon((new_x, new_y), poly) for poly in all_polygons
+            )
+            if is_inside:
+                # Reset to original safe position
+                text_obj.set_position((orig_bbox[0], orig_bbox[1]))
 
     # Connector type
     connector_type_enum = {
